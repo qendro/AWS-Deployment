@@ -1,0 +1,26 @@
+---
+metadata:
+  name: "Generic Development Server"
+  description: "Basic Linux development environment"
+  version: "1.0"
+
+aws:
+  instance_type: "t2.micro"
+  region: "us-east-1"
+  
+application:
+  type: "generic"
+  setup_commands:
+    - "yum groupinstall -y 'Development Tools'"
+    - "yum install -y git vim htop tree"
+  
+networking:
+  ports:
+    - 22    # SSH
+    - 80    # HTTP
+    - 443   # HTTPS
+    - 8080  # Development server
+
+tags:
+  Project: "Development"
+  Environment: "Development"

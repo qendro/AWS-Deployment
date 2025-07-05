@@ -1,0 +1,68 @@
+# AWS-Deployment .gitignore
+# Protect sensitive files and generated content
+
+# AWS Credentials - NEVER commit these!
+.env
+config/aws-credentials
+*.pem
+*.key
+
+# AWS CLI local cache
+.aws/
+
+# Generated files
+yq.exe
+yq
+output/
+logs/
+*.log
+
+# SSH keys and configs
+ssh-config-*
+known_hosts*
+
+# Terraform state (if using Terraform integration)
+*.tfstate
+*.tfstate.backup
+.terraform/
+
+# IDE and editor files
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Docker build context
+.dockerignore
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Node modules (if using Node.js deployments)
+node_modules/
+
+# Python cache (if using Python deployments)
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+
+# Local environment overrides
+.env.local
+.env.development
+.env.test
+.env.production

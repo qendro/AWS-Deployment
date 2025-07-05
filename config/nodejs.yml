@@ -1,0 +1,27 @@
+---
+metadata:
+  name: "Node.js Application Server"
+  description: "Node.js environment with PM2 and common tools"
+  version: "1.0"
+
+aws:
+  instance_type: "t2.micro"
+  region: "us-east-1"
+  
+application:
+  type: "nodejs"
+  setup_commands:
+    - "npm install -g pm2 yarn nodemon"
+    - "mkdir -p /home/ec2-user/app"
+  
+networking:
+  ports:
+    - 22    # SSH
+    - 80    # HTTP
+    - 443   # HTTPS
+    - 3000  # Node.js app
+    - 3001  # Development server
+
+tags:
+  Project: "NodeJS"
+  Environment: "Development"

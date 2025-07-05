@@ -1,0 +1,25 @@
+---
+metadata:
+  name: "DXNN Deployment"
+  description: "Deploy DXNN/Erlang neural network environment"
+  version: "1.0"
+
+aws:
+  instance_type: "t2.micro"
+  region: "us-east-1"
+  
+application:
+  type: "dxnn"
+  setup_commands:
+    - "git clone https://github.com/dxnn/dxnn.git /home/ec2-user/dxnn"
+    - "cd /home/ec2-user/dxnn && make"
+  
+networking:
+  ports:
+    - 22    # SSH
+    - 4369  # Erlang Port Mapper Daemon
+    - 9100  # Custom Erlang port
+
+tags:
+  Project: "DXNN"
+  Environment: "Development"

@@ -1,0 +1,31 @@
+---
+metadata:
+  name: "Generic Erlang Environment"
+  description: "Basic Erlang/OTP development environment"
+  version: "1.0"
+
+aws:
+  instance_type: "t2.micro"
+  region: "us-east-1"
+  
+application:
+  type: "dxnn"
+  setup_commands:
+    # Install Erlang/OTP and basic development tools
+    - "yum update -y"
+    - "yum install -y erlang git vim htop tree"
+    - "yum groupinstall -y 'Development Tools'"
+    # Create development workspace
+    - "mkdir -p /home/ec2-user/erlang-workspace"
+    - "chown ec2-user:ec2-user /home/ec2-user/erlang-workspace"
+  
+networking:
+  ports:
+    - 22    # SSH
+    - 4369  # Erlang Port Mapper Daemon (epmd)
+    - 9100  # Custom Erlang application port
+
+tags:
+  Project: "Erlang"
+  Environment: "Development"
+  Purpose: "Erlang Development"
