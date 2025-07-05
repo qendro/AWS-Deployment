@@ -14,6 +14,9 @@ Deploy AWS EC2 instances with a single command using Docker. Clean, simple, work
 # Deploy with defaults (generic Linux server)
 .\docker-deploy.ps1
 
+# Deploy Erlang (generic  server)
+.\docker-deploy.ps1 -Config config/erlang.yml
+
 # Deploy DXNN/Erlang application
 .\docker-deploy.ps1 -Config config/dxnn.yml
 

@@ -248,8 +248,7 @@ launch_instance() {
     create_security_group "$sg_name"
     
     # Get AMI ID
-    local ami_id
-    ami_id=$(get_latest_ami)
+    local ami_id="$AMI_ID"
     [[ -z "$ami_id" ]] && { log_error "Failed to get AMI ID"; exit 1; }
     
     log_info "Using AMI: $ami_id"
@@ -289,6 +288,8 @@ launch_instance() {
     
     # Save deployment info
     local info_file="$OUTPUT_DIR/deployment-$timestamp.json"
+    # Use relative path for SSH key in info and log output
+    local ssh_key_path="./output/${key_name}-key.pem"
     cat > "$info_file" << EOF
 {
     "timestamp": "$timestamp",
@@ -299,28 +300,41 @@ launch_instance() {
     "public_ip": "$public_ip",
     "key_name": "$key_name",
     "security_group": "$sg_name",
-    "ssh_key_file": "$OUTPUT_DIR/${key_name}-key.pem",
-    "ssh_command": "ssh -i $OUTPUT_DIR/${key_name}-key.pem ec2-user@$public_ip"
+    "ssh_key_file": "$ssh_key_path",
+    "ssh_command": "ssh -i $ssh_key_path $SSH_USER@$public_ip"
 }
 EOF
     
     log_success "Deployment complete!"
     log_info "Instance ID: $instance_id"
     log_info "Public IP: $public_ip"
-    log_info "SSH Command: ssh -i $OUTPUT_DIR/${key_name}-key.pem ec2-user@$public_ip"
+    log_info "SSH Command: ssh -i $ssh_key_path $SSH_USER@$public_ip"
     log_info "Deployment info saved to: $info_file"
 }
 
-# Generate user data script based on app type
+# Generate user data script based on config file setup_commands (generic for all types)
 generate_user_data() {
+    if command -v yq >/dev/null 2>&1 && [[ -n "$CONFIG_FILE" ]]; then
+        # Check if setup_commands exists and is a non-empty array
+        local setup_count
+        setup_count=$(yq e '.application.setup_commands | length' "$CONFIG_FILE" 2>/dev/null)
+        if [[ "$setup_count" =~ ^[1-9][0-9]*$ ]]; then
+            echo '#!/bin/bash'
+            yq e '.application.setup_commands[]' "$CONFIG_FILE" | while read -r cmd; do
+                echo "$cmd"
+            done
+            # Mark setup complete (try for both ubuntu and ec2-user)
+            echo 'touch /home/ubuntu/SETUP_COMPLETE || touch /home/ec2-user/SETUP_COMPLETE'
+            return
+        fi
+    fi
+    # Fallback to legacy logic if no setup_commands
     local app_type="$1"
-    
     cat << 'EOF'
 #!/bin/bash
 yum update -y
 yum install -y git curl wget htop vim
 EOF
-    
     case "$app_type" in
         dxnn)
             cat << 'EOF'
@@ -421,13 +435,26 @@ load_config() {
         INSTANCE_TYPE=$(yq e '.aws.instance_type // env(INSTANCE_TYPE) // "t2.micro"' "$config_file")
         REGION=$(yq e '.aws.region // env(REGION) // "us-east-1"' "$config_file")
         APP_TYPE=$(yq e '.application.type // env(APP_TYPE) // "generic"' "$config_file")
-        
+        AMI_ID=$(yq e '.aws.ami_id' "$config_file")
+        SSH_USER=$(yq e '.aws.ssh_user' "$config_file")
+        if [[ -z "$AMI_ID" || "$AMI_ID" == "null" ]]; then
+            log_error "AMI ID (aws.ami_id) must be specified in the config file."
+            exit 1
+        fi
+        if [[ -z "$SSH_USER" || "$SSH_USER" == "null" ]]; then
+            log_error "SSH user (aws.ssh_user) must be specified in the config file."
+            exit 1
+        fi
         log_info "Loaded configuration from $config_file"
         log_info "Instance Type: $INSTANCE_TYPE"
         log_info "Region: $REGION"
         log_info "App Type: $APP_TYPE"
+        log_info "AMI ID: $AMI_ID"
+        log_info "SSH User: $SSH_USER"
     else
         log_warning "yq not available, using environment variables or defaults"
+        log_error "AMI ID must be specified and yq is required."
+        exit 1
     fi
 }
 

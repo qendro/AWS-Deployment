@@ -7,17 +7,18 @@ metadata:
 aws:
   instance_type: "t2.micro"
   region: "us-east-1"
+  ami_id: "ami-020cba7c55df1f615"   # Ubuntu Server 24.04 LTS, 64-bit (x86)
+  ssh_user: "ubuntu"                # "ec2-user", "ubuntu", "admin", "debian", "root"
   
 application:
-  type: "dxnn"
+  type: "erlang"
   setup_commands:
-    # Install Erlang/OTP and basic development tools
-    - "yum update -y"
-    - "yum install -y erlang git vim htop tree"
-    - "yum groupinstall -y 'Development Tools'"
-    # Create development workspace
-    - "mkdir -p /home/ec2-user/erlang-workspace"
-    - "chown ec2-user:ec2-user /home/ec2-user/erlang-workspace"
+  # Update and install prerequisites
+  - "apt-get update -y"
+  - "apt-get install -y erlang-base git vim htop tree build-essential"
+  # Create development workspace
+  - "mkdir -p /home/ubuntu/erlang-workspace"
+  - "chown ubuntu:ubuntu /home/ubuntu/erlang-workspace"
   
 networking:
   ports:
