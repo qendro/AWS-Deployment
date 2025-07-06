@@ -3,19 +3,26 @@
 
 # AWS Credentials - NEVER commit these!
 .env
+.env.local
+.env.development
+.env.test
+.env.production
 config/aws-credentials
 *.pem
 *.key
 
-# AWS CLI local cache
+# AWS CLI local cache (only if copied into repo — remove if not applicable)
 .aws/
 
 # Generated files
-yq.exe
-yq
 output/
 logs/
 *.log
+*.tmp
+*.temp
+.cache/
+yq
+yq.exe
 
 # SSH keys and configs
 ssh-config-*
@@ -25,6 +32,7 @@ known_hosts*
 *.tfstate
 *.tfstate.backup
 .terraform/
+.terraform.lock.hcl
 
 # IDE and editor files
 .vscode/settings.json
@@ -45,11 +53,6 @@ Thumbs.db
 # Docker build context
 .dockerignore
 
-# Temporary files
-*.tmp
-*.temp
-.cache/
-
 # Node modules (if using Node.js deployments)
 node_modules/
 
@@ -61,8 +64,10 @@ __pycache__/
 .Python
 *.egg-info/
 
-# Local environment overrides
-.env.local
-.env.development
-.env.test
-.env.production
+# WSL/macOS history files (if repo is your working directory)
+.bash_history
+.zsh_history
+
+# WSL config (optional, if relevant)
+.wslconfig
+.wsl/
