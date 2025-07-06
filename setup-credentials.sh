@@ -8,6 +8,13 @@ success() { echo -e "\033[1;32m[SUCCESS]\033[0m $1"; }
 warn() { echo -e "\033[1;33m[WARNING]\033[0m $1"; }
 error() { echo -e "\033[1;31m[ERROR]\033[0m $1"; }
 
+# Make script executable if it isn't already
+if [ ! -x "$0" ]; then
+    info "Making script executable..."
+    chmod +x "$0"
+    success "Script is now executable"
+fi
+
 echo -e "\033[1;34mAWS Credentials Setup\033[0m"
 echo "====================="
 echo ""

@@ -1,6 +1,6 @@
-# AWS-Deployment Docker Image
-# This creates a containerized environment with all dependencies pre-installed
-# Works identically on Windows, macOS, and Linux
+# AWS-Deployment Docker Image (ARM64-Targeted)
+# Containerized environment for AWS deployment
+# Optimized for Apple Silicon (M1/M2/M3) or ARM64 systems
 
 FROM ubuntu:22.04
 
@@ -18,14 +18,14 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Install AWS CLI v2
-RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" \
+# Install ARM64-compatible AWS CLI v2
+RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o "awscliv2.zip" \
     && unzip awscliv2.zip \
     && ./aws/install \
     && rm -rf awscliv2.zip aws/
 
-# Install yq for YAML parsing
-RUN curl -L "https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64" -o /usr/local/bin/yq \
+# Install yq for YAML parsing (ARM64 build)
+RUN curl -L "https://github.com/mikefarah/yq/releases/latest/download/yq_linux_arm64" -o /usr/local/bin/yq \
     && chmod +x /usr/local/bin/yq
 
 # Create working directory

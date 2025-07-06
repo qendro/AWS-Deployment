@@ -1,32 +1,48 @@
 ---
 metadata:
-  name: "Generic Erlang Environment"
-  description: "Basic Erlang/OTP development environment"
+  name: "DXNN Erlang Environment"
+  description: "Erlang latest (Ubuntu) with DXNN Trader full setup"
   version: "1.0"
 
 aws:
   instance_type: "t2.micro"
   region: "us-east-1"
   ami_id: "ami-020cba7c55df1f615"   # Ubuntu Server 24.04 LTS, 64-bit (x86)
-  ssh_user: "ubuntu"                # "ec2-user", "ubuntu", "admin", "debian", "root"
+  ssh_user: "ubuntu"
   
 application:
   type: "erlang"
   setup_commands:
-  # Update and install prerequisites
   - "apt-get update -y"
-  - "apt-get install -y erlang-base git vim htop tree build-essential"
-  # Create development workspace
-  - "mkdir -p /home/ubuntu/erlang-workspace"
-  - "chown ubuntu:ubuntu /home/ubuntu/erlang-workspace"
+  - "apt-get install -y erlang git vim htop tree build-essential"
+
+  # Clone and run your app
+  - |
+    set -e
+    git clone https://github.com/qendro/DXNN-Trader-v2.git /home/ubuntu/dxnn-trader
+    chown -R ubuntu:ubuntu /home/ubuntu/dxnn-trader
+    su - ubuntu -c '
+      cd /home/ubuntu/dxnn-trader
+      erl -noshell -eval "
+        mnesia:create_schema([node()]).
+        mnesia:start().
+        make:all().
+        fx:init().    % This will recreate the FX ETS tables
+        fx:start().
+        timer:sleep(3000).
+        polis:create().
+        polis:start().
+        polis:sync().
+        benchmarker:start(sliding_window_5).
+      "'
   
 networking:
   ports:
-    - 22    # SSH
-    - 4369  # Erlang Port Mapper Daemon (epmd)
-    - 9100  # Custom Erlang application port
+    - 22
+    - 4369
+    - 9100
 
 tags:
-  Project: "Erlang"
+  Project: "DXNN-Trader"
   Environment: "Development"
-  Purpose: "Erlang Development"
+  Purpose: "DXNN Erlang Trader Environment"

@@ -29,9 +29,9 @@ show_help() {
     echo "    -h          Show this help"
     echo ""
     echo "EXAMPLES:"
-    echo "    ./docker-deploy.sh                 # Deploy with defaults"
+    echo "    ./docker-deploy.sh                     # Deploy with defaults"
     echo "    ./docker-deploy.sh -c config/dxnn.yml  # Deploy DXNN"
-    echo "    ./docker-deploy.sh -x              # Clean up resources"
+    echo "    ./docker-deploy.sh -x                  # Clean up resources"
     exit 0
 }
 
@@ -50,7 +50,7 @@ done
 echo -e "\033[1;34mSimple AWS Deployment\033[0m"
 echo "===================="
 
-# Check Docker
+# Check Docker availability
 info "Checking Docker availability..."
 if ! docker --version &>/dev/null; then
     error "Docker not found or not running!"
@@ -68,7 +68,7 @@ success "Docker daemon is running"
 # Build image if needed
 if $BUILD || ! docker image inspect aws-deployment:latest &>/dev/null; then
     info "Building AWS-Deployment Docker image..."
-    if ! docker build -t aws-deployment:latest .; then
+    if ! docker buildx build --platform linux/arm64 -t aws-deployment:latest .; then
         error "Failed to build Docker image"
         exit 1
     fi
