@@ -266,16 +266,26 @@ launch_instance() {
     # Launch instance
     log_info "Launching EC2 instance..."
     local instance_id
-    instance_id=$(aws ec2 run-instances \
-        --image-id "$ami_id" \
+    
+    # Build run-instances command with optional availability zone
+    local run_cmd="aws ec2 run-instances \
+        --image-id \"$ami_id\" \
         --count 1 \
-        --instance-type "$instance_type" \
-        --key-name "$key_name" \
-        --security-groups "$sg_name" \
-        --user-data "file://$user_data_file" \
-        --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$instance_name},{Key=AppType,Value=$app_type},{Key=CreatedBy,Value=AWS-Deployment}]" \
-        --query 'Instances[0].InstanceId' \
-        --output text)
+        --instance-type \"$instance_type\" \
+        --key-name \"$key_name\" \
+        --security-groups \"$sg_name\" \
+        --user-data \"file://$user_data_file\" \
+        --tag-specifications \"ResourceType=instance,Tags=[{Key=Name,Value=$instance_name},{Key=AppType,Value=$app_type},{Key=CreatedBy,Value=AWS-Deployment}]\""
+    
+    # Add availability zone if specified in config
+    if [[ -n "$AVAILABILITY_ZONE" && "$AVAILABILITY_ZONE" != "null" ]]; then
+        log_info "Using availability zone: $AVAILABILITY_ZONE"
+        run_cmd="$run_cmd --placement AvailabilityZone=\"$AVAILABILITY_ZONE\""
+    fi
+    
+    run_cmd="$run_cmd --query 'Instances[0].InstanceId' --output text"
+    
+    instance_id=$(eval $run_cmd)
     
     [[ -z "$instance_id" ]] && { log_error "Failed to launch instance"; exit 1; }
     
@@ -440,6 +450,7 @@ load_config() {
         # Extract values from YAML
         INSTANCE_TYPE=$(yq e '.aws.instance_type // env(INSTANCE_TYPE) // "t2.micro"' "$config_file")
         REGION=$(yq e '.aws.region // env(REGION) // "us-east-1"' "$config_file")
+        AVAILABILITY_ZONE=$(yq e '.aws.availability_zone' "$config_file")
         APP_TYPE=$(yq e '.application.type // env(APP_TYPE) // "generic"' "$config_file")
         AMI_ID=$(yq e '.aws.ami_id' "$config_file")
         SSH_USER=$(yq e '.aws.ssh_user' "$config_file")
