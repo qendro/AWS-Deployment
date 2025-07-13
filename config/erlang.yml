@@ -4,7 +4,10 @@ metadata:
   version: "1.0"
 
 aws:
-  instance_type: "t2.micro"
+  #instance_type: "t2.micro"
+  instance_type: "c7a.4xlarge"
+  market_type: "spot"                     # ← Use Spot pricing
+  spot_max_price: "0.30"                  # ← Optional: max hourly price in USD
   region: "us-east-1"
   availability_zone: "us-east-1a"
   ami_id: "ami-020cba7c55df1f615"   # Ubuntu Server 24.04 LTS, 64-bit (x86)
