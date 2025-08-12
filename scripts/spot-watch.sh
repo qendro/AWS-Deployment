@@ -90,19 +90,161 @@ check_rebalance() {
     return 1  # No rebalance
 }
 
-# S3 upload with exact retry pattern (placeholder for AWS Signature v4)
+# AWS Signature v4 helper functions
+hex() {
+    printf '%s' "$1" | od -A n -t x1 | tr -d ' \n'
+}
+
+sha256() {
+    printf '%s' "$1" | sha256sum | cut -d' ' -f1
+}
+
+# Get AWS credentials from instance metadata
+get_aws_credentials() {
+    local role_name
+    role_name=$(curl -s "$IMDS/latest/meta-data/iam/security-credentials/")
+    if [[ -z "$role_name" ]]; then
+        log "ERROR: No IAM role found"
+        return 1
+    fi
+    
+    local credentials
+    credentials=$(curl -s "$IMDS/latest/meta-data/iam/security-credentials/$role_name")
+    if [[ -z "$credentials" ]]; then
+        log "ERROR: Failed to get credentials for role: $role_name"
+        return 1
+    fi
+    
+    # Extract credentials using jq (should be available)
+    ACCESS_KEY_ID=$(echo "$credentials" | jq -r '.AccessKeyId')
+    SECRET_ACCESS_KEY=$(echo "$credentials" | jq -r '.SecretAccessKey')
+    SESSION_TOKEN=$(echo "$credentials" | jq -r '.Token')
+    
+    if [[ "$ACCESS_KEY_ID" == "null" ]] || [[ "$SECRET_ACCESS_KEY" == "null" ]]; then
+        log "ERROR: Invalid credentials response"
+        return 1
+    fi
+    
+    log "INFO: Got credentials for role: $role_name"
+}
+
+# Generate AWS Signature v4 for S3 PUT
+s3_put_with_sigv4() {
+    local file_path="$1"
+    local s3_key="$2"
+    
+    # Get credentials
+    if ! get_aws_credentials; then
+        return 1
+    fi
+    
+    local http_method="PUT"
+    local service="s3"
+    local region="us-east-1"  # Hardcoded for now
+    local host="$S3_BUCKET.s3.amazonaws.com"
+    local endpoint="https://$host"
+    
+    # File info
+    local content_type="application/octet-stream"
+    local content_length
+    content_length=$(stat -c%s "$file_path" 2>/dev/null || stat -f%z "$file_path" 2>/dev/null)
+    
+    # Timestamps
+    local timestamp
+    timestamp=$(date -u +%Y%m%dT%H%M%SZ)
+    local date_stamp
+    date_stamp=$(date -u +%Y%m%d)
+    
+    # Canonical request
+    local canonical_uri="/$s3_key"
+    local canonical_querystring=""
+    local canonical_headers="content-length:$content_length"$'\n'"content-type:$content_type"$'\n'"host:$host"$'\n'"x-amz-date:$timestamp"
+    if [[ -n "$SESSION_TOKEN" ]]; then
+        canonical_headers="$canonical_headers"$'\n'"x-amz-security-token:$SESSION_TOKEN"
+    fi
+    canonical_headers="$canonical_headers"$'\n'
+    
+    local signed_headers="content-length;content-type;host;x-amz-date"
+    if [[ -n "$SESSION_TOKEN" ]]; then
+        signed_headers="$signed_headers;x-amz-security-token"
+    fi
+    
+    local payload_hash
+    payload_hash=$(sha256 "$(cat "$file_path")")
+    
+    local canonical_request="$http_method"$'\n'"$canonical_uri"$'\n'"$canonical_querystring"$'\n'"$canonical_headers"$'\n'"$signed_headers"$'\n'"$payload_hash"
+    
+    # String to sign
+    local algorithm="AWS4-HMAC-SHA256"
+    local credential_scope="$date_stamp/$region/$service/aws4_request"
+    local string_to_sign="$algorithm"$'\n'"$timestamp"$'\n'"$credential_scope"$'\n'"$(sha256 "$canonical_request")"
+    
+    # Sign the string
+    local k_date
+    k_date=$(printf '%s' "$date_stamp" | openssl dgst -sha256 -hmac "AWS4$SECRET_ACCESS_KEY" -binary)
+    local k_region
+    k_region=$(printf '%s' "$region" | openssl dgst -sha256 -hmac "$k_date" -binary)
+    local k_service
+    k_service=$(printf '%s' "$service" | openssl dgst -sha256 -hmac "$k_region" -binary)
+    local k_signing
+    k_signing=$(printf '%s' "aws4_request" | openssl dgst -sha256 -hmac "$k_service" -binary)
+    local signature
+    signature=$(printf '%s' "$string_to_sign" | openssl dgst -sha256 -hmac "$k_signing" | cut -d' ' -f2)
+    
+    # Authorization header
+    local authorization_header="$algorithm Credential=$ACCESS_KEY_ID/$credential_scope, SignedHeaders=$signed_headers, Signature=$signature"
+    
+    # Make the request
+    local curl_headers=(
+        "Content-Type: $content_type"
+        "Content-Length: $content_length"
+        "Host: $host"
+        "X-Amz-Date: $timestamp"
+        "Authorization: $authorization_header"
+    )
+    
+    if [[ -n "$SESSION_TOKEN" ]]; then
+        curl_headers+=("X-Amz-Security-Token: $SESSION_TOKEN")
+    fi
+    
+    # Build curl command
+    local curl_cmd="curl -s -w '%{http_code}' -X PUT"
+    for header in "${curl_headers[@]}"; do
+        curl_cmd="$curl_cmd -H '$header'"
+    done
+    curl_cmd="$curl_cmd --data-binary @$file_path '$endpoint$canonical_uri'"
+    
+    # Execute upload
+    local response
+    response=$(eval "$curl_cmd")
+    local http_code="${response: -3}"
+    
+    if [[ "$http_code" == "200" ]]; then
+        log "UPLOAD_OK: $s3_key"
+        return 0
+    else
+        log "UPLOAD_FAIL: HTTP $http_code for $s3_key"
+        return 1
+    fi
+}
+
+# S3 upload with exact retry pattern (AWS Signature v4)
 upload_checkpoint() {
     local checkpoint_file="$1"
     local s3_key="$2"
     
-    # For now, just log the upload attempt
-    # In production, this would use AWS Signature v4 with curl
-    log "INFO: Would upload $checkpoint_file to s3://$S3_BUCKET/$s3_key"
-    log "INFO: Using IAM instance profile for authentication"
+    for attempt in {1..3}; do
+        if s3_put_with_sigv4 "$checkpoint_file" "$s3_key"; then
+            return 0
+        fi
+        log "UPLOAD_FAIL: attempt $attempt for $s3_key"
+        if [[ $attempt -lt 3 ]]; then
+            sleep $((2 ** (attempt - 1)))  # 1s, 2s, 4s backoff
+        fi
+    done
     
-    # Simulate successful upload for testing
-    log "UPLOAD_OK: $s3_key (simulated)"
-    return 0
+    log "UPLOAD_FAIL: all attempts failed for $s3_key"
+    return 1
 }
 
 # Main polling loop

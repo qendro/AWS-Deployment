@@ -277,6 +277,12 @@ launch_instance() {
         --user-data \"file://$user_data_file\" \
         --tag-specifications \"ResourceType=instance,Tags=[{Key=Name,Value=$instance_name},{Key=AppType,Value=$app_type},{Key=CreatedBy,Value=AWS-Deployment}]\""
     
+    # Add IAM instance profile if specified
+    if [[ -n "$IAM_INSTANCE_PROFILE" && "$IAM_INSTANCE_PROFILE" != "null" ]]; then
+        run_cmd="$run_cmd --iam-instance-profile Name=\"$IAM_INSTANCE_PROFILE\""
+        log_info "Using IAM instance profile: $IAM_INSTANCE_PROFILE"
+    fi
+    
     # Add spot instance support if enabled
     if [[ "$MARKET_TYPE" == "spot" ]]; then
         run_cmd="$run_cmd --instance-market-options MarketType=spot,SpotOptions={MaxPrice=$SPOT_MAX_PRICE}"
@@ -525,6 +531,7 @@ load_config() {
         INSTANCE_TYPE=$(yq e '.aws.instance_type // env(INSTANCE_TYPE) // "t2.micro"' "$config_file")
         REGION=$(yq e '.aws.region // env(REGION) // "us-east-1"' "$config_file")
         AVAILABILITY_ZONE=$(yq e '.aws.availability_zone' "$config_file")
+        IAM_INSTANCE_PROFILE=$(yq e '.aws.iam_instance_profile' "$config_file")
         APP_TYPE=$(yq e '.application.type // env(APP_TYPE) // "generic"' "$config_file")
         AMI_ID=$(yq e '.aws.ami_id' "$config_file")
         SSH_USER=$(yq e '.aws.ssh_user' "$config_file")

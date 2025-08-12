@@ -11,6 +11,7 @@ aws:
   availability_zone: "us-east-1a"
   ami_id: "ami-020cba7c55df1f615"
   ssh_user: "ubuntu"
+  iam_instance_profile: "DXNN-Spot-Profile"
 
 spot_handling:
   enabled: true
