@@ -12,7 +12,7 @@ log() {
     echo "[UTC $(date -u -Iseconds)] $1" >> "$LOG_FILE"
 }
 
-# For now, just check local checkpoints since S3 restore requires AWS CLI
+# For now, just check local checkpoints since S3 restore requires AWS Signature v4 implementation
 # In production, this would use direct S3 HTTP calls with AWS Signature v4
 log "INFO: S3 restore not implemented yet (requires AWS Signature v4)"
 

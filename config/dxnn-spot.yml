@@ -4,7 +4,7 @@ metadata:
   version: "1.0"
 
 aws:
-  instance_type: "c7a.2xlarge"
+  instance_type: "c5.2xlarge"
   market_type: "spot"
   spot_max_price: "0.30"
   region: "us-east-1"
