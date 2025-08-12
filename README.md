@@ -33,6 +33,13 @@ Deploy AWS EC2 instances with a single command using Docker. Clean, simple, work
 
 That's it! 🎉
 
+## View 
+    tail -f /var/log/cloud-init-output.log
+    control - c   ## exit
+    tmux attach -t trader
+    contrl - b + d  ## exit
+
+
 ## 📜 What You Get
 
 - EC2 Instance - Configured for your app type
@@ -47,7 +54,6 @@ That's it! 🎉
 
 .\docker-deploy.ps1 -Config config/dxnn.yml         # Deploy with specific config - Windows
 ./docker-deploy.sh -c config/dxnn.yml               # Deploy with specific config - Mac/Linux/WSL
-#### tail -f /var/log/cloud-init-output.log
 
 
 .\docker-deploy.ps1 -Shell                          # Interactive shell for debugging - Windows

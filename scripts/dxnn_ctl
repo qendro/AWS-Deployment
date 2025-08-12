@@ -1,0 +1,39 @@
+#!/bin/bash
+set -euo pipefail
+
+ERLANG_NODE="dxnn@127.0.0.1"
+ERLANG_COOKIE_FILE="/var/lib/dxnn/.erlang.cookie"
+
+checkpoint() {
+    # Send checkpoint command to the running tmux session as ubuntu user
+    if ! sudo -u ubuntu tmux send-keys -t trader 'benchmarker:checkpoint_and_exit().' Enter; then
+        echo "Failed to send checkpoint command to tmux"
+        exit 10
+    fi
+    
+    # Wait a moment for the command to execute
+    sleep 2
+    
+    echo "Checkpoint command sent successfully"
+    exit 0
+}
+
+restore() {
+    # Send restore command to the running tmux session as ubuntu user
+    if ! sudo -u ubuntu tmux send-keys -t trader 'benchmarker:maybe_restore().' Enter; then
+        echo "Failed to send restore command to tmux"
+        exit 10
+    fi
+    
+    # Wait a moment for the command to execute
+    sleep 2
+    
+    echo "Restore command sent successfully"
+    exit 0
+}
+
+case "${1:-}" in
+    checkpoint) checkpoint ;;
+    restore) restore ;;
+    *) echo "Usage: $0 {checkpoint|restore}" >&2; exit 1 ;;
+esac

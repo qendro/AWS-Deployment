@@ -277,6 +277,12 @@ launch_instance() {
         --user-data \"file://$user_data_file\" \
         --tag-specifications \"ResourceType=instance,Tags=[{Key=Name,Value=$instance_name},{Key=AppType,Value=$app_type},{Key=CreatedBy,Value=AWS-Deployment}]\""
     
+    # Add spot instance support if enabled
+    if [[ "$MARKET_TYPE" == "spot" ]]; then
+        run_cmd="$run_cmd --instance-market-options MarketType=spot,SpotOptions={MaxPrice=$SPOT_MAX_PRICE}"
+        log_info "Launching SPOT instance with max price: $SPOT_MAX_PRICE"
+    fi
+    
     # Add availability zone if specified in config
     if [[ -n "$AVAILABILITY_ZONE" && "$AVAILABILITY_ZONE" != "null" ]]; then
         log_info "Using availability zone: $AVAILABILITY_ZONE"
@@ -339,6 +345,58 @@ generate_user_data() {
             yq e '.application.setup_commands[]' "$CONFIG_FILE" | while read -r cmd; do
                 echo "$cmd"
             done
+            
+            # Add spot watcher files if spot handling is enabled
+            if [[ "$SPOT_ENABLED" == "true" ]]; then
+                echo "# Install spot watcher and control shim"
+                echo "cat > /usr/local/bin/spot-watch.sh << 'SPOT_SCRIPT_EOF'"
+                
+                # Template the spot-watch.sh with config values
+                sed -e "s/CHECKPOINT_DEADLINE=60/CHECKPOINT_DEADLINE=$CHECKPOINT_DEADLINE/g" \
+                    -e "s/POLL_INTERVAL=2/POLL_INTERVAL=$POLL_INTERVAL/g" \
+                    -e "s|S3_BUCKET=\"dxnn-checkpoints\"|S3_BUCKET=\"$S3_BUCKET\"|g" \
+                    -e "s|S3_PREFIX=\"dxnn\"|S3_PREFIX=\"$S3_PREFIX\"|g" \
+                    -e "s|JOB_ID=\"dxnn-training-001\"|JOB_ID=\"$JOB_ID\"|g" \
+                    -e "s|CONTAINER_NAME=\"dxnn-app\"|CONTAINER_NAME=\"$CONTAINER_NAME\"|g" \
+                    -e "s|ERLANG_NODE=\"dxnn@127.0.0.1\"|ERLANG_NODE=\"$ERLANG_NODE\"|g" \
+                    -e "s|ERLANG_COOKIE_FILE=\"/var/lib/dxnn/.erlang.cookie\"|ERLANG_COOKIE_FILE=\"$ERLANG_COOKIE_FILE\"|g" \
+                    -e "s/USE_REBALANCE=false/USE_REBALANCE=$USE_REBALANCE/g" \
+                    scripts/spot-watch.sh
+                
+                echo "SPOT_SCRIPT_EOF"
+                
+                echo "cat > /usr/local/bin/dxnn_ctl << 'CTL_SCRIPT_EOF'"
+                sed -e "s|ERLANG_NODE=\"dxnn@127.0.0.1\"|ERLANG_NODE=\"$ERLANG_NODE\"|g" \
+                    -e "s|ERLANG_COOKIE_FILE=\"/var/lib/dxnn/.erlang.cookie\"|ERLANG_COOKIE_FILE=\"$ERLANG_COOKIE_FILE\"|g" \
+                    scripts/dxnn_ctl
+                echo "CTL_SCRIPT_EOF"
+                
+                echo "cat > /etc/systemd/system/spot-watch.service << 'SERVICE_EOF'"
+                cat scripts/spot-watch.service
+                echo "SERVICE_EOF"
+                
+                echo "chmod +x /usr/local/bin/spot-watch.sh /usr/local/bin/dxnn_ctl"
+                echo "mkdir -p /run"
+                echo "systemctl daemon-reload"
+                
+                # Start watcher after container is running
+                echo "systemctl enable spot-watch"
+                echo "systemctl start spot-watch"
+                
+                # Add restore from S3 if enabled
+                if [[ "$RESTORE_FROM_S3" == "true" ]]; then
+                    echo "cat > /usr/local/bin/restore-from-s3.sh << 'RESTORE_SCRIPT_EOF'"
+                    sed -e "s|S3_BUCKET=\"dxnn-checkpoints\"|S3_BUCKET=\"$S3_BUCKET\"|g" \
+                        -e "s|S3_PREFIX=\"dxnn\"|S3_PREFIX=\"$S3_PREFIX\"|g" \
+                        -e "s|JOB_ID=\"dxnn-training-001\"|JOB_ID=\"$JOB_ID\"|g" \
+                        -e "s|CONTAINER_NAME=\"dxnn-app\"|CONTAINER_NAME=\"$CONTAINER_NAME\"|g" \
+                        scripts/restore-from-s3.sh
+                    echo "RESTORE_SCRIPT_EOF"
+                    echo "chmod +x /usr/local/bin/restore-from-s3.sh"
+                    echo "/usr/local/bin/restore-from-s3.sh"
+                fi
+            fi
+            
             # Mark setup complete (try for both ubuntu and ec2-user)
             echo 'touch /home/ubuntu/SETUP_COMPLETE || touch /home/ec2-user/SETUP_COMPLETE'
             return
@@ -441,6 +499,22 @@ cleanup_resources() {
     log_success "Cleanup complete!"
 }
 
+# Validate spot configuration
+validate_spot_config() {
+    if [[ "$SPOT_ENABLED" == "true" ]]; then
+        # Required fields when spot handling is enabled
+        [[ -z "$S3_BUCKET" ]] && { log_error "s3_bucket is required when spot_handling.enabled=true"; exit 1; }
+        [[ -z "$CONTAINER_NAME" ]] && { log_error "container_name is required when spot_handling.enabled=true"; exit 1; }
+        
+        # Required fields when S3 restore is enabled
+        if [[ "$RESTORE_FROM_S3" == "true" ]]; then
+            [[ -z "$JOB_ID" ]] && { log_error "job_id is required when restore_from_s3_on_boot=true"; exit 1; }
+        fi
+        
+        log_info "Spot configuration validated successfully"
+    fi
+}
+
 # Load configuration file
 load_config() {
     local config_file="$1"
@@ -454,6 +528,22 @@ load_config() {
         APP_TYPE=$(yq e '.application.type // env(APP_TYPE) // "generic"' "$config_file")
         AMI_ID=$(yq e '.aws.ami_id' "$config_file")
         SSH_USER=$(yq e '.aws.ssh_user' "$config_file")
+        
+        # Load spot handling configuration
+        MARKET_TYPE=$(yq e '.aws.market_type' "$config_file")
+        SPOT_MAX_PRICE=$(yq e '.aws.spot_max_price' "$config_file")
+        SPOT_ENABLED=$(yq e '.spot_handling.enabled' "$config_file")
+        CHECKPOINT_DEADLINE=$(yq e '.spot_handling.checkpoint_deadline_seconds' "$config_file")
+        POLL_INTERVAL=$(yq e '.spot_handling.poll_interval_seconds' "$config_file")
+        S3_BUCKET=$(yq e '.spot_handling.s3_bucket' "$config_file")
+        S3_PREFIX=$(yq e '.spot_handling.s3_prefix' "$config_file")
+        JOB_ID=$(yq e '.spot_handling.job_id' "$config_file")
+        CONTAINER_NAME=$(yq e '.spot_handling.container_name' "$config_file")
+        ERLANG_NODE=$(yq e '.spot_handling.erlang_node' "$config_file")
+        ERLANG_COOKIE_FILE=$(yq e '.spot_handling.erlang_cookie_file' "$config_file")
+        RESTORE_FROM_S3=$(yq e '.spot_handling.restore_from_s3_on_boot' "$config_file")
+        USE_REBALANCE=$(yq e '.spot_handling.use_rebalance_recommendation' "$config_file")
+        
         if [[ -z "$AMI_ID" || "$AMI_ID" == "null" ]]; then
             log_error "AMI ID (aws.ami_id) must be specified in the config file."
             exit 1
@@ -462,12 +552,21 @@ load_config() {
             log_error "SSH user (aws.ssh_user) must be specified in the config file."
             exit 1
         fi
+        
+        # Validate spot configuration
+        validate_spot_config
+        
         log_info "Loaded configuration from $config_file"
         log_info "Instance Type: $INSTANCE_TYPE"
         log_info "Region: $REGION"
         log_info "App Type: $APP_TYPE"
         log_info "AMI ID: $AMI_ID"
         log_info "SSH User: $SSH_USER"
+        if [[ "$SPOT_ENABLED" == "true" ]]; then
+            log_info "Spot Enabled: $SPOT_ENABLED"
+            log_info "S3 Bucket: $S3_BUCKET"
+            log_info "Job ID: $JOB_ID"
+        fi
     else
         log_warning "yq not available, using environment variables or defaults"
         log_error "AMI ID must be specified and yq is required."

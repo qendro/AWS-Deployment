@@ -1,0 +1,53 @@
+#!/bin/bash
+set -euo pipefail
+
+S3_BUCKET="dxnn-checkpoints"
+S3_PREFIX="dxnn"
+JOB_ID="dxnn-training-001"
+CHECKPOINT_DIR="/var/lib/dxnn/checkpoints"
+CONTAINER_NAME="dxnn-app"
+LOG_FILE="/var/log/spot-restore.log"
+
+log() {
+    echo "[UTC $(date -u -Iseconds)] $1" >> "$LOG_FILE"
+}
+
+# Find latest S3 checkpoint for this job_id
+latest_s3_folder=$(aws s3 ls "s3://$S3_BUCKET/$S3_PREFIX/$JOB_ID/" --recursive | \
+    grep "\.dmp$" | awk '{print $4}' | sed 's|/[^/]*$||' | sort -u | tail -1)
+
+if [[ -n "$latest_s3_folder" ]]; then
+    log "S3_SOURCE: Found latest folder $latest_s3_folder"
+    
+    # Download checkpoint and metadata
+    aws s3 cp "s3://$S3_BUCKET/$latest_s3_folder/" "$CHECKPOINT_DIR/" --recursive --no-progress
+    
+    # Call DXNN restore
+    if docker exec "$CONTAINER_NAME" /usr/local/bin/dxnn_ctl restore; then
+        log "RESTORE_OK: from S3"
+    else
+        log "RESTORE_ERROR: from S3"
+        exit 1
+    fi
+else
+    log "S3_SOURCE: No S3 checkpoint found for job: $JOB_ID"
+    
+    # Local fallback only if S3 unavailable and local has valid metadata
+    local_checkpoint=$(ls -1t "$CHECKPOINT_DIR"/checkpoint-*.dmp 2>/dev/null | head -1)
+    if [[ -n "$local_checkpoint" ]]; then
+        metadata_file="${local_checkpoint%.dmp}.metadata.json"
+        if [[ -f "$metadata_file" ]] && jq -e '.job_id' "$metadata_file" >/dev/null 2>&1; then
+            log "LOCAL_SOURCE: Using local checkpoint with valid metadata"
+            if docker exec "$CONTAINER_NAME" /usr/local/bin/dxnn_ctl restore; then
+                log "RESTORE_OK: from local"
+            else
+                log "RESTORE_ERROR: from local"
+                exit 1
+            fi
+        else
+            log "LOCAL_SOURCE: Skipping local checkpoint (no valid metadata)"
+        fi
+    else
+        log "LOCAL_SOURCE: No local checkpoint found"
+    fi
+fi

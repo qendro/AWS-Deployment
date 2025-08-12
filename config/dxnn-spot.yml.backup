@@ -1,0 +1,72 @@
+metadata:
+  name: "DXNN Spot Instance"
+  description: "DXNN with spot interruption handling"
+  version: "1.0"
+
+aws:
+  instance_type: "c7a.2xlarge"
+  market_type: "spot"
+  spot_max_price: "0.30"
+  region: "us-east-1"
+  availability_zone: "us-east-1a"
+  ami_id: "ami-020cba7c55df1f615"
+  ssh_user: "ubuntu"
+
+spot_handling:
+  enabled: true
+  checkpoint_deadline_seconds: 60  # From IMDS detection
+  poll_interval_seconds: 2
+  s3_bucket: "dxnn-checkpoints"
+  s3_prefix: "dxnn"
+  job_id: "dxnn-training-001"  # REQUIRED when restore enabled
+  container_name: "dxnn-app"
+  erlang_node: "dxnn@127.0.0.1"
+  erlang_cookie_file: "/var/lib/dxnn/.erlang.cookie"
+  restore_from_s3_on_boot: true
+  use_rebalance_recommendation: false  # Default OFF
+
+application:
+  type: "dxnn-spot"
+  setup_commands:
+    - "apt-get update -y"
+    - "apt-get install -y erlang git vim htop tree build-essential tmux chrony unzip"
+    - "systemctl enable chrony && systemctl start chrony"
+    - "curl 'https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip' -o 'awscliv2.zip'"
+    - "unzip awscliv2.zip && ./aws/install"
+    - "curl -L https://github.com/mikefarah/yq/releases/download/v4.35.1/yq_linux_amd64 -o /usr/local/bin/yq && chmod +x /usr/local/bin/yq"
+    - "mkdir -p /var/lib/dxnn/checkpoints /var/log /run"
+    - "chmod 755 /var/lib/dxnn/checkpoints"
+    - |
+      set -e
+      cd /home/ubuntu
+      git clone -b tradeBot-001 https://github.com/qendro/DXNN-Trader-v2.git dxnn-trader
+      chown -R ubuntu:ubuntu /home/ubuntu/dxnn-trader
+      su - ubuntu -c '
+        cd /home/ubuntu/dxnn-trader
+        tmux new-session -d -s trader bash -c "  
+          erl -noshell -eval \"
+            mnesia:create_schema([node()]),
+            mnesia:start(),
+            make:all(),
+            fx:init(),
+            fx:start(),
+            timer:sleep(5000),
+            polis:create(),
+            polis:start(),
+            polis:sync(),
+            benchmarker:maybe_restore(),
+            benchmarker:start(sliding_window_5)
+          \"
+        "
+      '
+
+networking:
+  ports:
+    - 22
+    - 4369
+    - 9100
+
+tags:
+  Project: "DXNN-Spot"
+  Environment: "Production"
+  JobId: "dxnn-training-001"
