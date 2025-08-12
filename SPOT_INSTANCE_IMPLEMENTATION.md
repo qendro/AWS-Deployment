@@ -137,96 +137,96 @@ This guide implements AWS Spot instance support with **minimal DXNN changes** an
 - [x] Monitor logs: `sudo journalctl -u spot-watch -f`
 
 #### **Step 15: Test Spot Interruption (Simulated)**
-- [ ] SSH to spot instance
-- [ ] Check spot watcher status: `sudo systemctl status spot-watch`
-- [ ] Monitor logs: `sudo tail -f /var/log/spot-watch.log`
-- [ ] Simulate interruption for testing
-- [ ] Verify checkpoint creation and S3 upload
-- [ ] Check metadata.json creation
+- [x] SSH to spot instance
+- [x] Check spot watcher status: `sudo systemctl status spot-watch`
+- [x] Monitor logs: `sudo tail -f /var/log/spot-watch.log`
+- [x] Simulate interruption for testing
+- [x] Verify checkpoint creation and S3 upload
+- [x] Check metadata.json creation
 
 #### **Step 16: Test Restore Process**
-- [ ] Deploy new spot instance
-- [ ] SSH to new instance
-- [ ] Verify automatic restore from S3
-- [ ] Check checkpoint files in `/var/lib/dxnn/checkpoints/`
-- [ ] Verify S3 download and restore execution
-- [ ] Confirm DXNN resumes from checkpoint
+- [x] Deploy new spot instance
+- [x] SSH to new instance
+- [x] Verify automatic restore from S3
+- [x] Check checkpoint files in `/var/lib/dxnn/checkpoints/`
+- [x] Verify S3 download and restore execution
+- [x] Confirm DXNN resumes from checkpoint
 
 ---
 
 ### **Phase 4: Production Deployment**
 
 #### **Step 17: Create Production Configuration**
-- [ ] **File**: `AWS-Deployment/config/dxnn-spot-prod.yml`
-- [ ] Copy and modify for production environment
-- [ ] Set production `job_id` and `s3_bucket`
-- [ ] Configure production instance types and pricing
-- [ ] Set appropriate security groups and networking
+- [x] **File**: `AWS-Deployment/config/dxnn-spot-prod.yml`
+- [x] Copy and modify for production environment
+- [x] Set production `job_id` and `s3_bucket`
+- [x] Configure production instance types and pricing
+- [x] Set appropriate security groups and networking
 
 #### **Step 18: Deploy Production Instance**
-- [ ] Deploy production spot instance
-- [ ] Monitor deployment and service startup
-- [ ] Verify all components are running correctly
-- [ ] Test connectivity and basic functionality
+- [x] Deploy production spot instance
+- [x] Monitor deployment and service startup
+- [x] Verify all components are running correctly
+- [x] Test connectivity and basic functionality
 
 #### **Step 19: Monitor and Validate**
-- [ ] Monitor spot watcher logs: `sudo journalctl -u spot-watch -f`
-- [ ] Check checkpoint creation frequency
-- [ ] Monitor S3 uploads and storage usage
-- [ ] Verify restore functionality on instance restarts
-- [ ] Track performance metrics and error rates
+- [x] Monitor spot watcher logs: `sudo journalctl -u spot-watch -f`
+- [x] Check checkpoint creation frequency
+- [x] Monitor S3 uploads and storage usage
+- [x] Verify restore functionality on instance restarts
+- [x] Track performance metrics and error rates
 
 ---
 
 ## ✅ **Acceptance Criteria Checklist**
 
 ### **Timing Requirements**
-- [ ] **From IMDS detection → shutdown command ≤ 120s**
-- [ ] **Checkpoint deadline 60s from detection** (not script start)
-- [ ] **Poll interval 2s** for fast response
-- [ ] **S3 upload retry: 3 attempts with 1s/2s/4s backoff**
+- [x] **From IMDS detection → shutdown command ≤ 120s**
+- [x] **Checkpoint deadline 60s from detection** (not script start)
+- [x] **Poll interval 2s** for fast response
+- [x] **S3 upload retry: 3 attempts with 1s/2s/4s backoff**
 
 ### **Single-Shot Protection**
-- [ ] **Watcher is single-shot even across restarts**
-- [ ] **PID-based lock file in `/run/dxnn_spot_triggered`**
-- [ ] **Stale lock cleanup on startup**
-- [ ] **No duplicate triggers or restart storms**
+- [x] **Watcher is single-shot even across restarts**
+- [x] **PID-based lock file in `/run/dxnn_spot_triggered`**
+- [x] **Stale lock cleanup on startup**
+- [x] **No duplicate triggers or restart storms**
 
 ### **S3 Layout & Metadata**
-- [ ] **S3 path format exactly**: `s3://<bucket>/<prefix>/<job_id>/YYYY/MM/DD/HHMMSSZ/`
-- [ ] **UTC timestamps with trailing Z**
-- [ ] **Required metadata.json**: `job_id`, `instance_id`, `action`, `utc`, `version`
-- [ ] **Deterministic keying** (not instance-dependent)
+- [x] **S3 path format exactly**: `s3://<bucket>/<prefix>/<job_id>/YYYY/MM/DD/HHMMSSZ/`
+- [x] **UTC timestamps with trailing Z**
+- [x] **Required metadata.json**: `job_id`, `instance_id`, `action`, `utc`, `version`
+- [x] **Deterministic keying** (not instance-dependent)
 
 ### **Restore Logic**
-- [ ] **S3 is primary source of truth**
-- [ ] **Local fallback only if S3 unavailable and valid metadata**
-- [ ] **On next boot with restore enabled, DXNN resumes from latest S3 for that job_id**
-- [ ] **Clear logging of which source won**
+- [x] **S3 is primary source of truth**
+- [x] **Local fallback only if S3 unavailable and valid metadata**
+- [x] **On next boot with restore enabled, DXNN resumes from latest S3 for that job_id**
+- [x] **Clear logging of which source won**
 
 ### **DXNN Minimalism**
-- [ ] **DXNN changed by exactly 2 functions**
-- [ ] **No S3/IMDS in Erlang code**
-- [ ] **No new dependencies**
-- [ ] **Container control shim handles RPC**
+- [x] **DXNN changed by exactly 2 functions**
+- [x] **No S3/IMDS in Erlang code**
+- [x] **No new dependencies**
+- [x] **Container control shim handles RPC**
 
 ### **IMDSv2 & Robustness**
-- [ ] **IMDSv2 with token refresh on 401/403**
-- [ ] **Never fall back to IMDSv1**
-- [ ] **Token TTL 6 hours with refresh logic**
-- [ ] **Poll only `/latest/meta-data/spot/instance-action` by default**
+- [x] **IMDSv2 with token refresh on 401/403**
+- [x] **Never fall back to IMDSv1**
+- [x] **Token TTL 6 hours with refresh logic**
+- [x] **Poll only `/latest/meta-data/spot/instance-action` by default**
 
 ### **Systemd & Service Management**
-- [ ] **Systemd restart limits and timeouts**
-- [ ] **Proper service dependencies and ordering**
-- [ ] **TimeoutStopSec=70 to stay under 2-minute SLA**
-- [ ] **StartLimitBurst=3 prevents restart storms**
+- [x] **Systemd restart limits and timeouts**
+- [x] **Proper service dependencies and ordering**
+- [x] **TimeoutStopSec=70 to stay under 2-minute SLA**
+- [x] **StartLimitBurst=3 prevents restart storms**
 
 ### **Configuration & Validation**
-- [ ] **Config validation with fail-fast errors**
-- [ ] **Required fields: `s3_bucket`, `container_name`, `job_id` (when restore enabled)**
-- [ ] **Clear error messages for missing configuration**
-- [ ] **All tunables in single config file**
+- [x] **Config validation with fail-fast errors**
+- [x] **Required fields: `s3_bucket`, `container_name`, `job_id` (when restore enabled)**
+- [x] **Clear error messages for missing configuration**
+- [x] **All tunables in single config file**
 
 ---
 

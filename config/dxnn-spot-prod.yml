@@ -1,0 +1,146 @@
+metadata:
+  name: "DXNN Spot Instance - Production"
+  description: "Production DXNN with spot interruption handling and optimized settings"
+  version: "1.0"
+
+aws:
+  instance_type: "c5.4xlarge"  # Upgraded for production workload
+  market_type: "spot"
+  spot_max_price: "0.50"  # Higher limit for production availability
+  region: "us-east-1"
+  availability_zone: "us-east-1a"
+  ami_id: "ami-020cba7c55df1f615"  # Ubuntu 24.04 LTS
+  ssh_user: "ubuntu"
+  iam_instance_profile: "DXNN-Spot-Profile"
+
+spot_handling:
+  enabled: true
+  checkpoint_deadline_seconds: 60  # From IMDS detection
+  poll_interval_seconds: 2
+  s3_bucket: "dxnn-checkpoints"
+  s3_prefix: "dxnn-prod"  # Separate prefix for production
+  job_id: "dxnn-prod-training-001"  # Production job ID
+  container_name: "dxnn-app"
+  erlang_node: "dxnn@127.0.0.1"
+  erlang_cookie_file: "/var/lib/dxnn/.erlang.cookie"
+  restore_from_s3_on_boot: true
+  use_rebalance_recommendation: false  # Keep OFF for stability
+
+application:
+  type: "dxnn-spot"
+  setup_commands:
+    # System updates and essential packages
+    - "apt-get update -y"
+    - "apt-get install -y erlang git vim htop tree build-essential tmux chrony jq openssl"
+    
+    # Time synchronization (critical for trading)
+    - "systemctl enable chrony && systemctl start chrony"
+    - "chrony sources -v"
+    
+    # Install yq for YAML parsing
+    - "curl -L https://github.com/mikefarah/yq/releases/download/v4.35.1/yq_linux_amd64 -o /usr/local/bin/yq && chmod +x /usr/local/bin/yq"
+    
+    # Create directories with proper permissions
+    - "mkdir -p /var/lib/dxnn/checkpoints /var/log /run"
+    - "chown -R ubuntu:ubuntu /var/lib/dxnn"
+    - "chmod 755 /var/lib/dxnn/checkpoints"
+    
+    # Performance tuning for production
+    - "echo 'vm.swappiness=10' >> /etc/sysctl.conf"
+    - "echo 'net.core.rmem_max=134217728' >> /etc/sysctl.conf"
+    - "echo 'net.core.wmem_max=134217728' >> /etc/sysctl.conf"
+    - "sysctl -p"
+    
+    # Set up log rotation for spot watcher
+    - |
+      cat > /etc/logrotate.d/spot-watch << 'EOF'
+      /var/log/spot-watch.log {
+          daily
+          rotate 7
+          compress
+          delaycompress
+          missingok
+          notifempty
+          create 644 root root
+      }
+      EOF
+    
+    # Clone and setup DXNN application
+    - |
+      set -e
+      cd /home/ubuntu
+      git clone https://github.com/qendro/DXNN-Trader-v2.git dxnn-trader
+      chown -R ubuntu:ubuntu /home/ubuntu/dxnn-trader
+      
+      # Create production Erlang cookie
+      echo "dxnn_prod_$(openssl rand -hex 16)" > /var/lib/dxnn/.erlang.cookie
+      chown ubuntu:ubuntu /var/lib/dxnn/.erlang.cookie
+      chmod 600 /var/lib/dxnn/.erlang.cookie
+      
+      # Start DXNN application with production settings
+      su - ubuntu -c '
+        cd /home/ubuntu/dxnn-trader
+        tmux new-session -d -s trader bash -c "  
+          export ERL_CRASH_DUMP=/var/log/erl_crash.dump
+          erl -noshell -eval \"
+            mnesia:create_schema([node()]),
+            mnesia:start(),
+            make:all(),
+            fx:init(),
+            fx:start(),
+            timer:sleep(5000),
+            polis:create(),
+            polis:start(),
+            polis:sync(),
+            benchmarker:maybe_restore(),
+            benchmarker:start(sliding_window_5)
+          \"
+        "
+      '
+    
+    # Health check endpoint (simple HTTP server for monitoring)
+    - |
+      cat > /usr/local/bin/health-check.sh << 'HEALTH_EOF'
+      #!/bin/bash
+      # Simple health check for DXNN application
+      if tmux has-session -t trader 2>/dev/null; then
+          echo "OK: DXNN trader session active"
+          exit 0
+      else
+          echo "ERROR: DXNN trader session not found"
+          exit 1
+      fi
+      HEALTH_EOF
+      chmod +x /usr/local/bin/health-check.sh
+
+networking:
+  ports:
+    - 22    # SSH
+    - 4369  # Erlang Port Mapper Daemon
+    - 9100  # Monitoring (if needed)
+
+# Production-specific tags
+tags:
+  Project: "DXNN-Spot"
+  Environment: "Production"
+  JobId: "dxnn-prod-training-001"
+  Owner: "DXNN-Team"
+  CostCenter: "Trading"
+  Backup: "Enabled"
+  Monitoring: "Required"
+
+# Production monitoring and alerting (for future implementation)
+monitoring:
+  enabled: true
+  metrics:
+    - "spot_interruptions"
+    - "checkpoint_frequency"
+    - "s3_upload_success_rate"
+    - "restore_success_rate"
+    - "trading_performance"
+  
+alerts:
+    - "spot_interruption_detected"
+    - "checkpoint_failed"
+    - "s3_upload_failed"
+    - "application_crashed"
