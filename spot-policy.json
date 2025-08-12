@@ -1,0 +1,28 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "S3CheckpointAccess",
+      "Effect": "Allow",
+      "Action": [
+        "s3:PutObject",
+        "s3:GetObject",
+        "s3:ListBucket"
+      ],
+      "Resource": [
+        "arn:aws:s3:::dxnn-checkpoints",
+        "arn:aws:s3:::dxnn-checkpoints/*"
+      ]
+    },
+    {
+      "Sid": "EC2SpotInstanceAccess",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeSpotInstanceRequests",
+        "ec2:DescribeInstances",
+        "ec2:DescribeInstanceStatus"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

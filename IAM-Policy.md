@@ -2,97 +2,46 @@
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "EC2DescribeReadOnlyInRegion",
+      "Sid": "EC2AndIAMAccess",
       "Effect": "Allow",
       "Action": [
-        "ec2:DescribeImages",
-        "ec2:DescribeInstances",
-        "ec2:DescribeInstanceTypes",
-        "ec2:DescribeKeyPairs",
-        "ec2:DescribeSecurityGroups",
-        "ec2:DescribeSubnets",
-        "ec2:DescribeVpcs",
-        "ec2:DescribeAvailabilityZones",
-        "ec2:DescribeNetworkInterfaces",
-        "ec2:DescribeInstanceAttribute",
-        "ec2:DescribeVolumes"
-      ],
-      "Resource": "*",
-      "Condition": {
-        "StringEquals": { "aws:RequestedRegion": "us-east-1" }
-      }
-    },
-    {
-      "Sid": "RunInstancesOnlyInAZusEast1a",
-      "Effect": "Allow",
-      "Action": "ec2:RunInstances",
-      "Resource": "*",
-      "Condition": {
-        "StringEquals": {
-          "aws:RequestedRegion": "us-east-1",
-          "ec2:AvailabilityZone": "us-east-1a"
-        }
-      }
-    },
-    {
-      "Sid": "NetworkInterfacesUsedByRunInstances",
-      "Effect": "Allow",
-      "Action": [
-        "ec2:CreateNetworkInterface",
-        "ec2:AttachNetworkInterface",
-        "ec2:DeleteNetworkInterface"
-      ],
-      "Resource": "*",
-      "Condition": {
-        "StringEquals": { "aws:RequestedRegion": "us-east-1" }
-      }
-    },
-    {
-      "Sid": "TerminateAndTagInstancesInRegion",
-      "Effect": "Allow",
-      "Action": [
+        "ec2:Describe*",
+        "ec2:RunInstances",
         "ec2:TerminateInstances",
-        "ec2:CreateTags"
-      ],
-      "Resource": "*",
-      "Condition": {
-        "StringEquals": { "aws:RequestedRegion": "us-east-1" }
-      }
-    },
-    {
-      "Sid": "OptionalNetworkAndKeypairInRegion",
-      "Effect": "Allow",
-      "Action": [
+        "ec2:CreateTags",
         "ec2:CreateSecurityGroup",
         "ec2:AuthorizeSecurityGroupIngress",
         "ec2:RevokeSecurityGroupIngress",
-        "ec2:CreateKeyPair"
-      ],
-      "Resource": "*",
-      "Condition": {
-        "StringEquals": { "aws:RequestedRegion": "us-east-1" }
-      }
-    },
-    {
-      "Sid": "CreateAndAttachVolumesOnlyInAZusEast1a",
-      "Effect": "Allow",
-      "Action": [
+        "ec2:CreateKeyPair",
+        "ec2:ImportKeyPair",
         "ec2:CreateVolume",
-        "ec2:AttachVolume"
+        "ec2:AttachVolume",
+        "ec2:CreateNetworkInterface",
+        "ec2:AttachNetworkInterface",
+        "ec2:DeleteNetworkInterface",
+        "iam:PassRole",
+        "iam:CreateRole",
+        "iam:DeleteRole",
+        "iam:AttachRolePolicy",
+        "iam:DetachRolePolicy",
+        "iam:CreateInstanceProfile",
+        "iam:DeleteInstanceProfile",
+        "iam:AddRoleToInstanceProfile",
+        "iam:RemoveRoleFromInstanceProfile",
+        "iam:CreatePolicy",
+        "iam:DeletePolicy",
+        "iam:PutRolePolicy",
+        "s3:CreateBucket",
+        "s3:ListBucket",
+        "s3:GetObject",
+        "s3:PutObject"
       ],
       "Resource": "*",
       "Condition": {
         "StringEquals": {
-          "aws:RequestedRegion": "us-east-1",
-          "ec2:AvailabilityZone": "us-east-1a"
+          "aws:RequestedRegion": "us-east-1"
         }
       }
-    },
-    {
-      "Sid": "PassInstanceProfileRole",
-      "Effect": "Allow",
-      "Action": "iam:PassRole",
-      "Resource": "arn:aws:iam::525548632213:role/dxnn-spot-instance-role"
     }
   ]
 }
