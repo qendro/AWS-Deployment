@@ -31,3 +31,4 @@ if [[ -n "$local_checkpoint" ]]; then
 else
     log "LOCAL_SOURCE: No local checkpoint found"
 fi
+
