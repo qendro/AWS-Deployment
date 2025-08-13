@@ -1,6 +1,6 @@
-# Simple AWS Deployment
+# DXNN Spot Instance Deployment
 
-Deploy AWS EC2 instances with a single command using Docker. Clean, simple, works everywhere.
+Deploy DXNN neural network training on AWS spot instances with automatic interruption handling. Clean, simple, cost-effective.
 
 ## 🚀 Quick Start
 
@@ -9,132 +9,188 @@ Deploy AWS EC2 instances with a single command using Docker. Clean, simple, work
 .\setup-credentials.ps1   # Windows (PowerShell)
 ./setup-credentials.sh    # Mac/Linux/WSL
 
-### 2. Deploy Your Application
+### 2. Deploy DXNN Spot Instance
 
-.\docker-deploy.ps1       # Windows (PowerShell)
-./docker-deploy.sh        # Mac/Linux/WSL
+./docker-deploy.sh -c config/dxnn-spot.yml         # Development spot instance
+./docker-deploy.sh -c config/dxnn-spot-prod.yml    # Production spot instance
 
-#### Examples
+### 3. Monitor Your Training
 
-.\docker-deploy.ps1                                 # Deploy with defaults (generic Linux server) - Windows
-./docker-deploy.sh                                  # Deploy with defaults (generic Linux server) - Mac/Linux/WSL
+ssh -i output/your-key.pem ubuntu@PUBLIC_IP        # Connect to instance
+sudo tail -f /var/log/spot-watch.log               # Monitor spot interruptions
+tmux attach -t trader                              # View DXNN training
 
-.\docker-deploy.ps1 -Config config/erlang.yml       # Deploy Erlang (generic server) - Windows
-./docker-deploy.sh -c config/erlang.yml             # Deploy Erlang (generic server) - Mac/Linux/WSL
+### 4. Clean Up When Done
 
-.\docker-deploy.ps1 -Config config/dxnn.yml         # Deploy DXNN/Erlang application - Windows
-./docker-deploy.sh -c config/dxnn.yml               # Deploy DXNN/Erlang application - Mac/Linux/WSL
-
-.\docker-deploy.ps1 -Config config/nodejs.yml       # Deploy Node.js application - Windows
-./docker-deploy.sh -c config/nodejs.yml             # Deploy Node.js application - Mac/Linux/WSL
-
-.\docker-deploy.ps1 -Cleanup                        # Clean up when done - Windows
-./docker-deploy.sh -x                               # Clean up when done - Mac/Linux/WSL
+./docker-deploy.sh -x                              # Terminate instances
 
 That's it! 🎉
 
-## View 
-    tail -f /var/log/cloud-init-output.log
-    control - c   ## exit
-    tmux attach -t trader
-    contrl - b + d  ## exit
+## 💰 Spot Instance Benefits
+
+- **90% Cost Savings** - Pay spot prices instead of on-demand
+- **Automatic Interruption Handling** - Graceful checkpoint and restore
+- **S3 Backup** - Training state preserved across interruptions
+- **Seamless Recovery** - New instances automatically restore from S3
 
 
 ## 📜 What You Get
 
-- EC2 Instance - Configured for your app type
-- SSH Access - Private key automatically generated
-- Security Group - Properly configured ports
-- Instance Info - Displayed in terminal after deployment
+- **Spot Instance** - c5.2xlarge (dev) or c5.4xlarge (prod) at spot prices
+- **DXNN Training** - Automatically starts neural network training
+- **Spot Monitoring** - Watches for interruptions every 2 seconds
+- **S3 Backup** - Automatic checkpoint upload to S3
+- **Auto Restore** - New instances resume from latest S3 checkpoint
+- **SSH Access** - Private key automatically generated
+- **Monitoring** - Production monitoring dashboard included
 
 ## 🛠️ Available Commands
 
-.\docker-deploy.ps1                                 # Deploy with default config - Windows
-./docker-deploy.sh                                  # Deploy with default config - Mac/Linux/WSL
+./docker-deploy.sh -c config/dxnn-spot.yml         # Deploy development spot instance
+./docker-deploy.sh -c config/dxnn-spot-prod.yml    # Deploy production spot instance
+./docker-deploy.sh -s                              # Interactive shell for debugging
+./docker-deploy.sh -x                              # Clean up all AWS resources
+./docker-deploy.sh -h                              # Show help
 
-.\docker-deploy.ps1 -Config config/dxnn.yml         # Deploy with specific config - Windows
-./docker-deploy.sh -c config/dxnn.yml               # Deploy with specific config - Mac/Linux/WSL
+## 📊 Monitoring Commands
 
-
-.\docker-deploy.ps1 -Shell                          # Interactive shell for debugging - Windows
-./docker-deploy.sh -s                               # Interactive shell for debugging - Mac/Linux/WSL
-
-.\docker-deploy.ps1 -Cleanup                        # Clean up all AWS resources - Windows
-./docker-deploy.sh -x                               # Clean up all AWS resources - Mac/Linux/WSL
-
-.\docker-deploy.ps1 -Build                          # Rebuild Docker image - Windows
-./docker-deploy.sh -b                               # Rebuild Docker image - Mac/Linux/WSL
-
-.\docker-deploy.ps1 -Help                           # Show help - Windows
-./docker-deploy.sh -h                               # Show help - Mac/Linux/WSL
+scripts/monitor-production.sh                      # Run production monitoring dashboard
+sudo tail -f /var/log/spot-watch.log              # Watch spot interruption logs
+sudo systemctl status spot-watch                  # Check spot watcher status
+tmux attach -t trader                             # View DXNN training session
+/usr/local/bin/dxnn_ctl checkpoint                # Manual checkpoint
+/usr/local/bin/dxnn_ctl restore                   # Manual restore
 
 ## 📁 Configuration Files
 
 Available in config/:
 
-- generic.yml - Basic Linux development server
-- erlang.yml - Generic Erlang/OTP development environment
-- dxnn.yml - DXNN/Erlang neural networks
-- nodejs.yml - Node.js applications
-- dxnn-test.yml - Optimized for your DXNN project
+- **dxnn-spot.yml** - Development spot instance (c5.2xlarge, $0.30 max)
+- **dxnn-spot-prod.yml** - Production spot instance (c5.4xlarge, $0.50 max)
+
+## 🔧 Spot Instance Features
+
+- **Interruption Monitoring** - 2-second polling via IMDSv2
+- **Graceful Shutdown** - 60-second checkpoint deadline
+- **S3 Integration** - No AWS CLI needed, uses AWS Signature v4
+- **Deterministic Paths** - `s3://bucket/prefix/job-id/YYYY/MM/DD/HHMMSSZ/`
+- **Metadata Tracking** - Full checkpoint metadata with job tracking
+- **Single-Shot Protection** - Prevents duplicate interruption handling
 
 ## 🔧 Requirements
 
-- Docker Desktop - For containerized deployment
-- AWS Account - With programmatic access
-- PowerShell - For Windows (included in Windows 10+)
-- Mac/Linux Terminal or WSL - For Unix-based systems or WSL on Windows
-- AWS CLI - Installed and configured (aws configure)
+- **Docker Desktop** - For containerized deployment
+- **AWS Account** - With programmatic access and spot instance permissions
+- **S3 Bucket** - `dxnn-checkpoints` (created automatically)
+- **IAM Role** - `DXNN-Spot-Profile` with S3 access (see IAM-Policy-Spot.md)
+- **Mac/Linux Terminal** - For deployment commands
 
 ## 🐛 Troubleshooting
 
 ### Docker Issues
-
-docker --version                      # Check Docker status  
-docker info                           # Check Docker info  
-
-.\docker-deploy.ps1 -Build            # Rebuild image - Windows  
-./docker-deploy.sh -b                 # Rebuild image - Mac/Linux/WSL  
+```bash
+docker --version                      # Check Docker status
+docker info                           # Check Docker info
+```
 
 ### AWS Issues
+```bash
+aws sts get-caller-identity           # Check credentials
+./setup-credentials.sh                # Recreate credentials
+```
 
-aws sts get-caller-identity           # Check credentials  
+### Spot Instance Issues
+```bash
+ssh -i output/your-key.pem ubuntu@PUBLIC_IP        # Connect to instance
+sudo systemctl status spot-watch                   # Check spot watcher
+sudo tail -f /var/log/spot-watch.log              # View spot logs
+sudo cloud-init status                            # Check setup status
+```
 
-.\setup-credentials.ps1               # Recreate credentials - Windows  
-./setup-credentials.sh                # Recreate credentials - Mac/Linux/WSL  
-
-### SSH Issues
-
-ssh -i your-key.pem ec2-user@PUBLIC_IP   # Manual SSH connection  
+### S3 Issues
+```bash
+/usr/local/bin/simple-s3-upload.sh file.txt test/file.txt    # Test S3 upload
+aws s3 ls s3://dxnn-checkpoints/dxnn/ --recursive            # List checkpoints
+```  
 
 
 ## 📁 Project Structure
 
-AWS-Deployment/  
-├── config/                 # Configuration templates  
-│   ├── dxnn.yml           # DXNN/Erlang deployment  
-│   ├── generic.yml        # Generic Linux server  
-│   ├── nodejs.yml         # Node.js application  
-│   └── dxnn-test.yml      # Your DXNN project optimized  
-├── scripts/               # Utility scripts  
-│   ├── validate.sh        # AWS setup validation  
-│   └── vscode-ssh.sh      # VSCode SSH config generator  
-├── deploy.sh              # Core deployment logic (called by docker-deploy.sh)  
-├── Dockerfile             # Container definition  
-├── docker-deploy.sh       # Main deployment wrapper for Mac/Linux/WSL  
-├── setup-credentials.sh   # AWS credentials setup for Mac/Linux/WSL  
-├── docker-deploy.ps1      # Windows PowerShell wrapper  
-└── setup-credentials.ps1  # AWS credentials setup for Windows  
+```
+AWS-Deployment/
+├── config/
+│   ├── dxnn-spot.yml              # Development spot configuration
+│   └── dxnn-spot-prod.yml         # Production spot configuration
+├── scripts/
+│   ├── spot-watch.sh              # Spot interruption monitor
+│   ├── spot-watch.service         # Systemd service definition
+│   ├── dxnn_ctl                   # DXNN control interface
+│   ├── restore-from-s3.sh         # S3 checkpoint restore
+│   ├── simple-s3-upload.sh        # S3 upload (no AWS CLI)
+│   ├── simple-s3-download.sh      # S3 download (no AWS CLI)
+│   └── monitor-production.sh      # Production monitoring dashboard
+├── deploy.sh                      # Core deployment logic
+├── docker-deploy.sh               # Main deployment wrapper
+├── Dockerfile                     # Container definition
+├── setup-credentials.sh           # AWS credentials setup
+├── setup-credentials.ps1          # Windows credentials setup
+├── IAM-Policy-Spot.md             # Required IAM permissions
+├── spot-policy.json               # IAM policy JSON
+└── SPOT_INSTANCE_IMPLEMENTATION.md # Complete implementation guide
+```  
 
 ## 🧹 Cleanup
 
 To remove all AWS resources created by this tool:
 
-.\docker-deploy.ps1 -Cleanup   # Windows  
-./docker-deploy.sh -x          # Mac/Linux/WSL  
+```bash
+./docker-deploy.sh -x          # Terminate all instances and cleanup
+```
 
 ⚠️ Warning: This will terminate ALL instances created by AWS-Deployment!
 
+## 🔄 Spot Instance Recovery
+
+**When your spot instance terminates, recovery is automatic:**
+
+```bash
+# Just launch a new instance with the same config
+./docker-deploy.sh -c config/dxnn-spot-prod.yml
+```
+
+**What happens automatically:**
+- New instance launches and finds latest checkpoint in S3
+- DXNN resumes training from last saved state
+- No manual intervention needed
+
+**Manual verification (optional):**
+```bash
+ssh -i output/your-key.pem ubuntu@NEW_IP
+ls -la /var/lib/dxnn/checkpoints/          # Check restored files
+sudo tail -f /var/log/spot-restore.log     # View restore logs
+tmux attach -t trader                      # Monitor resumed training
+```
+
+## 🎯 Example Workflow
+
+```bash
+# 1. Setup credentials (one-time)
+./setup-credentials.sh
+
+# 2. Deploy production spot instance
+./docker-deploy.sh -c config/dxnn-spot-prod.yml
+
+# 3. Monitor training
+ssh -i output/your-key.pem ubuntu@PUBLIC_IP
+tmux attach -t trader
+
+# 4. If spot terminates, just redeploy
+./docker-deploy.sh -c config/dxnn-spot-prod.yml    # Automatically resumes!
+
+# 5. Cleanup when done
+./docker-deploy.sh -x
+```
+
 ---
 
-Simple. Clean. Works. Cross-Platform. 🌟
+**DXNN Neural Networks. Spot Instances. Automatic Recovery. 90% Cost Savings.** 🚀

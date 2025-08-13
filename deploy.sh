@@ -36,46 +36,20 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 # Help function
 show_help() {
     cat << EOF
-AWS EC2 Deployment Tool
+AWS DXNN Spot Instance Deployment
 
 USAGE:
     $0 [OPTIONS] [CONFIG_FILE]
 
 OPTIONS:
     -h, --help              Show this help message
-    -t, --type TYPE         Instance type (default: ${DEFAULT_INSTANCE_TYPE})
-    -r, --region REGION     AWS region (default: ${DEFAULT_REGION})
-    -a, --app-type TYPE     Application type (default: ${DEFAULT_APP_TYPE})
     -c, --config FILE       Configuration file to use
-    --list-configs          List available configuration templates
     --cleanup               Clean up all AWS resources
-    --ssh INSTANCE_ID       Connect to instance via SSH
 
 EXAMPLES:
-    # Quick deploy with defaults
-    $0
-
-    # Deploy with specific instance type
-    $0 -t t3.small
-
-    # Deploy using config file
-    $0 -c myapp.yml
-
-    # Deploy DXNN/Erlang application
-    $0 -a dxnn
-
-    # Cleanup all resources
-    $0 --cleanup
-
-    # SSH to running instance
-    $0 --ssh i-1234567890abcdef0
-
-SUPPORTED APP TYPES:
-    - generic     : Basic Linux instance
-    - dxnn        : DXNN/Erlang environment
-    - nodejs      : Node.js application server
-    - python      : Python application server
-    - docker      : Docker host
+    $0 -c config/dxnn-spot-prod.yml    # Deploy production
+    $0 -c config/dxnn-spot.yml         # Deploy development
+    $0 --cleanup                       # Clean up resources
 
 EOF
 }
@@ -88,32 +62,12 @@ parse_args() {
                 show_help
                 exit 0
                 ;;
-            -t|--type)
-                INSTANCE_TYPE="$2"
-                shift 2
-                ;;
-            -r|--region)
-                REGION="$2"
-                shift 2
-                ;;
-            -a|--app-type)
-                APP_TYPE="$2"
-                shift 2
-                ;;
             -c|--config)
                 CONFIG_FILE="$2"
                 shift 2
                 ;;
-            --list-configs)
-                list_configs
-                exit 0
-                ;;
             --cleanup)
                 cleanup_resources
-                exit 0
-                ;;
-            --ssh)
-                ssh_to_instance "$2"
                 exit 0
                 ;;
             -*)
@@ -130,46 +84,9 @@ parse_args() {
     done
 }
 
-# List available configuration templates
-list_configs() {
-    log_info "Available configuration templates:"
-    if [[ -d "$CONFIG_DIR" ]]; then
-        find "$CONFIG_DIR" -name "*.yml" -o -name "*.yaml" | while read -r config; do
-            basename="$(basename "$config")"
-            echo "  - $basename"
-            # Show description if available
-            if command -v yq >/dev/null 2>&1; then
-                desc=$(yq e '.metadata.description // ""' "$config" 2>/dev/null)
-                [[ -n "$desc" ]] && echo "    Description: $desc"
-            fi
-        done
-    else
-        log_warning "No config directory found at $CONFIG_DIR"
-    fi
-}
 
-# SSH to instance
-ssh_to_instance() {
-    local instance_id="$1"
-    [[ -z "$instance_id" ]] && { log_error "Instance ID required"; exit 1; }
-    
-    local key_file="$OUTPUT_DIR/${instance_id}-key.pem"
-    [[ ! -f "$key_file" ]] && { log_error "SSH key not found: $key_file"; exit 1; }
-    
-    local public_ip
-    public_ip=$(aws ec2 describe-instances \
-        --instance-ids "$instance_id" \
-        --query 'Reservations[0].Instances[0].PublicIpAddress' \
-        --output text 2>/dev/null)
-    
-    [[ "$public_ip" == "None" || -z "$public_ip" ]] && {
-        log_error "Could not get public IP for instance $instance_id"
-        exit 1
-    }
-    
-    log_info "Connecting to instance $instance_id at $public_ip"
-    ssh -i "$key_file" -o StrictHostKeyChecking=no ec2-user@"$public_ip"
-}
+
+
 
 # Create necessary directories
 create_directories() {
@@ -233,6 +150,79 @@ get_latest_ami() {
             "Name=state,Values=available" \
         --query 'Images | sort_by(@, &CreationDate) | [-1].ImageId' \
         --output text
+}
+
+log_launch_details() {
+    local instance_id="$1"
+    local public_ip="$2"
+    local instance_type="$3"
+    local key_path="$4"
+    local ssh_user="$5"
+    local app_type="$6"
+    local market_type="$7"
+    local spot_max_price="$8"
+    
+    # Get current timestamp
+    local utc_ts=$(date -u +%FT%TZ)
+    
+    # Get or generate RUN_ID
+    local run_id="${RUN_ID:-$(date -u +%Y%m%d-%H%M%SZ)}"
+    
+    # Get JOB_ID (empty if not set)
+    local job_id="${JOB_ID:-}"
+    
+    # Get git info
+    local git_repo=$(git config --get remote.origin.url 2>/dev/null || echo "unknown")
+    local git_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+    
+    # Create log file if it doesn't exist
+    local log_file="./run-log.md"
+    if [[ ! -f "$log_file" ]]; then
+        cat > "$log_file" << 'EOF'
+# DXNN Launch Log
+
+EOF
+    fi
+    
+    # Create temporary file for atomic write
+    local temp_file=$(mktemp)
+    
+    # Copy existing content and append new entries
+    cp "$log_file" "$temp_file"
+    
+    # Add separator line
+    echo "" >> "$temp_file"
+    echo "═══════════════════════════════════════════════════════════════════" >> "$temp_file"
+    echo "$utc_ts | run-id=$run_id" >> "$temp_file"
+    echo "═══════════════════════════════════════════════════════════════════" >> "$temp_file"
+    echo "" >> "$temp_file"
+    
+    # Add SSH command
+    echo "ssh -i $key_path $ssh_user@$public_ip" >> "$temp_file"
+    
+    # Add instance details
+    echo "Instance: $instance_id | $instance_type" >> "$temp_file"
+    
+    # Add market info
+    if [[ "$market_type" == "spot" ]]; then
+        echo "Market: spot | Max Price: \$$spot_max_price" >> "$temp_file"
+    else
+        echo "Market: on-demand" >> "$temp_file"
+    fi
+    
+    # Add job and app info
+    if [[ -n "$job_id" ]]; then
+        echo "Job: $job_id" >> "$temp_file"
+    fi
+    echo "App: $app_type" >> "$temp_file"
+    
+    # Add git info
+    echo "Repo: $git_repo | $git_branch" >> "$temp_file"
+    
+    # Atomic move
+    mv "$temp_file" "$log_file"
+    
+    log_info "Launch logged to $log_file"
 }
 
 # Launch EC2 instance
@@ -333,6 +323,9 @@ launch_instance() {
 }
 EOF
     
+    # Log launch details
+    log_launch_details "$instance_id" "$public_ip" "$instance_type" "$ssh_key_path" "$SSH_USER" "$app_type" "$MARKET_TYPE" "$SPOT_MAX_PRICE"
+    
     log_success "Deployment complete!"
     log_info "Instance ID: $instance_id"
     log_info "Public IP: $public_ip"
@@ -408,52 +401,13 @@ generate_user_data() {
             return
         fi
     fi
-    # Fallback to legacy logic if no setup_commands
-    local app_type="$1"
+    # Fallback for configs without setup_commands
     cat << 'EOF'
 #!/bin/bash
-yum update -y
-yum install -y git curl wget htop vim
+apt-get update -y
+apt-get install -y git curl wget htop vim
+echo "Basic environment ready" > /home/ubuntu/ready.txt
 EOF
-    case "$app_type" in
-        dxnn)
-            cat << 'EOF'
-# Install Erlang/OTP
-yum install -y erlang
-echo "DXNN environment ready" > /home/ec2-user/dxnn-ready.txt
-EOF
-            ;;
-        nodejs)
-            cat << 'EOF'
-# Install Node.js
-curl -fsSL https://rpm.nodesource.com/setup_lts.x | bash -
-yum install -y nodejs npm
-echo "Node.js environment ready" > /home/ec2-user/nodejs-ready.txt
-EOF
-            ;;
-        python)
-            cat << 'EOF'
-# Install Python 3 and pip
-yum install -y python3 python3-pip
-echo "Python environment ready" > /home/ec2-user/python-ready.txt
-EOF
-            ;;
-        docker)
-            cat << 'EOF'
-# Install Docker
-yum install -y docker
-systemctl start docker
-systemctl enable docker
-usermod -a -G docker ec2-user
-echo "Docker environment ready" > /home/ec2-user/docker-ready.txt
-EOF
-            ;;
-        generic|*)
-            cat << 'EOF'
-echo "Generic Linux environment ready" > /home/ec2-user/ready.txt
-EOF
-            ;;
-    esac
 }
 
 # Cleanup AWS resources

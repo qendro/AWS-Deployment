@@ -1,6 +1,4 @@
-# AWS-Deployment Docker Image (ARM64-Targeted)
-# Containerized environment for AWS deployment
-# Optimized for Apple Silicon (M1/M2/M3) or ARM64 systems
+# DXNN Spot Instance Deployment Container
 
 FROM ubuntu:22.04
 
@@ -18,30 +16,20 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Install ARM64-compatible AWS CLI v2
+# Install AWS CLI v2 and yq
 RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o "awscliv2.zip" \
     && unzip awscliv2.zip \
     && ./aws/install \
-    && rm -rf awscliv2.zip aws/
-
-# Install yq for YAML parsing (ARM64 build)
-RUN curl -L "https://github.com/mikefarah/yq/releases/latest/download/yq_linux_arm64" -o /usr/local/bin/yq \
+    && rm -rf awscliv2.zip aws/ \
+    && curl -L "https://github.com/mikefarah/yq/releases/latest/download/yq_linux_arm64" -o /usr/local/bin/yq \
     && chmod +x /usr/local/bin/yq
 
 # Create working directory
 WORKDIR /aws-deployment
 
-# Copy deployment scripts and configs
-COPY deploy.sh .
-COPY scripts/ ./scripts/
-COPY config/ ./config/
-
-# Make scripts executable
-RUN chmod +x deploy.sh && \
-    find scripts/ -name "*.sh" -exec chmod +x {} \;
-
-# Create directories for SSH keys and outputs
-RUN mkdir -p /root/.ssh /aws-deployment/output
+# Copy deployment files
+COPY deploy.sh scripts/ config/ ./
+RUN chmod +x deploy.sh && find scripts/ -name "*.sh" -exec chmod +x {} \;
 
 # Set default entrypoint
 ENTRYPOINT ["./deploy.sh"]

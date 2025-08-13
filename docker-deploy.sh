@@ -2,8 +2,7 @@
 
 # Simple AWS Deployment via Docker (Mac/Linux/WSL)
 
-CONFIG="config/generic.yml"
-BUILD=false
+CONFIG="config/dxnn-spot.yml"
 SHELL_MODE=false
 CLEANUP=false
 
@@ -15,31 +14,29 @@ error() { echo -e "\033[1;31m[ERROR]\033[0m $1"; }
 
 # Show help
 show_help() {
-    echo -e "\033[1;34mSimple AWS Deployment\033[0m"
-    echo "===================="
+    echo -e "\033[1;34mDXNN Spot Instance Deployment\033[0m"
+    echo "============================="
     echo ""
     echo "USAGE:"
-    echo "    ./docker-deploy.sh [-c config.yml] [-b] [-s] [-x] [-h]"
+    echo "    ./docker-deploy.sh [-c config.yml] [-s] [-x] [-h]"
     echo ""
     echo "OPTIONS:"
-    echo "    -c FILE     Configuration file (default: config/generic.yml)"
-    echo "    -b          Rebuild Docker image"
+    echo "    -c FILE     Configuration file (default: config/dxnn-spot.yml)"
     echo "    -s          Open interactive shell"
     echo "    -x          Clean up all AWS resources"
     echo "    -h          Show this help"
     echo ""
     echo "EXAMPLES:"
-    echo "    ./docker-deploy.sh                     # Deploy with defaults"
-    echo "    ./docker-deploy.sh -c config/dxnn.yml  # Deploy DXNN"
-    echo "    ./docker-deploy.sh -x                  # Clean up resources"
+    echo "    ./docker-deploy.sh -c config/dxnn-spot-prod.yml  # Production"
+    echo "    ./docker-deploy.sh -c config/dxnn-spot.yml       # Development"
+    echo "    ./docker-deploy.sh -x                            # Clean up"
     exit 0
 }
 
 # Parse arguments
-while getopts "c:bsxh" opt; do
+while getopts "c:sxh" opt; do
   case ${opt} in
     c) CONFIG="$OPTARG" ;;
-    b) BUILD=true ;;
     s) SHELL_MODE=true ;;
     x) CLEANUP=true ;;
     h) show_help ;;
@@ -66,7 +63,7 @@ fi
 success "Docker daemon is running"
 
 # Build image if needed
-if $BUILD || ! docker image inspect aws-deployment:latest &>/dev/null; then
+if ! docker image inspect aws-deployment:latest &>/dev/null; then
     info "Building AWS-Deployment Docker image..."
     if ! docker buildx build --platform linux/arm64 -t aws-deployment:latest .; then
         error "Failed to build Docker image"
