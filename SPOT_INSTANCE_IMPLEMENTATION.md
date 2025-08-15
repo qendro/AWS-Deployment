@@ -18,62 +18,62 @@ This guide implements AWS Spot instance support with **minimal DXNN changes** an
 ### **Phase 1: AWS-Deployment Infrastructure**
 
 #### **Step 1: Create Idempotent Finalizer Script**
-- [ ] **File**: `AWS-Deployment/scripts/finalize_run.sh`
-- [ ] Implement lock-based idempotency with `flock /var/lock/dxnn.finalize.lock`
-- [ ] Check for S3 sentinel `s3://bucket/prefix/job-id/run-id/_SUCCESS` before proceeding
-- [ ] Accept `COMPLETION_STATUS` and `EXIT_CODE` environment variables from wrapper
-- [ ] Implement S3 sync with exponential backoff (7 attempts: 1s, 2s, 4s, 8s, 16s, 32s)
-- [ ] Write `_SUCCESS` sentinel last with completion metadata (status, exit_code, reason)
-- [ ] Call `poweroff` for termination
-- [ ] Log to `/var/log/dxnn-run.log` with UTC timestamps and outcome information
-- [ ] Upload logs alongside artifacts
+- [x] **File**: `AWS-Deployment/scripts/finalize_run.sh`
+- [x] Implement lock-based idempotency with `flock /var/lock/dxnn.finalize.lock`
+- [x] Check for S3 sentinel `s3://bucket/prefix/job-id/run-id/_SUCCESS` before proceeding
+- [x] Accept `COMPLETION_STATUS` and `EXIT_CODE` environment variables from wrapper
+- [x] Implement S3 sync with exponential backoff (7 attempts: 1s, 2s, 4s, 8s, 16s, 32s)
+- [x] Write `_SUCCESS` sentinel last with completion metadata (status, exit_code, reason)
+- [x] Call `poweroff` for termination
+- [x] Log to `/var/log/dxnn-run.log` with UTC timestamps and outcome information
+- [x] Upload logs alongside artifacts
 
 #### **Step 2: Create Minimal Wrapper Script**
-- [ ] **File**: `AWS-Deployment/scripts/dxnn-wrapper.sh`
-- [ ] Run DXNN directly (no tmux) with `exec` or direct execution
-- [ ] Wait for DXNN process to exit and capture exit code (`wait $DXNN_PID`)
-- [ ] Determine completion reason: `normal` (exit code 0) vs `interrupted` (non-zero)
-- [ ] Call `finalize_run.sh` with `COMPLETION_STATUS` and `EXIT_CODE` environment variables
-- [ ] Trap TERM/INT to forward to DXNN child process
-- [ ] No polling, no watchdog, no completion detection
-- [ ] Log to `/var/log/dxnn-run.log` with exit code and completion reason
+- [x] **File**: `AWS-Deployment/scripts/dxnn-wrapper.sh`
+- [x] Run DXNN directly (no tmux) with `exec` or direct execution
+- [x] Wait for DXNN process to exit and capture exit code (`wait $DXNN_PID`)
+- [x] Determine completion reason: `normal` (exit code 0) vs `interrupted` (non-zero)
+- [x] Call `finalize_run.sh` with `COMPLETION_STATUS` and `EXIT_CODE` environment variables
+- [x] Trap TERM/INT to forward to DXNN child process
+- [x] No polling, no watchdog, no completion detection
+- [x] Log to `/var/log/dxnn-run.log` with exit code and completion reason
 
 #### **Step 3: Modify Spot Watcher (Minimal Changes)**
-- [ ] **File**: `AWS-Deployment/scripts/spot-watch.sh`
-- [ ] Keep existing polling loop unchanged
-- [ ] Keep existing checkpoint logic unchanged
-- [ ] Replace only the upload/shutdown section with single call to `finalize_run.sh`
-- [ ] Pass `COMPLETION_STATUS=interrupted` to finalizer
+- [x] **File**: `AWS-Deployment/scripts/spot-watch.sh`
+- [x] Keep existing polling loop unchanged
+- [x] Keep existing checkpoint logic unchanged
+- [x] Replace only the upload/shutdown section with single call to `finalize_run.sh`
+- [x] Pass `COMPLETION_STATUS=interrupted` to finalizer
 
 #### **Step 4: Update Configuration for Termination**
-- [ ] **File**: `AWS-Deployment/config/dxnn-spot.yml`
-- [ ] Add `instance_initiated_shutdown_behavior: "terminate"`
-- [ ] Install `flock` package
-- [ ] Install and start new scripts
-- [ ] Replace complex tmux startup with wrapper script call
+- [x] **File**: `AWS-Deployment/config/dxnn-spot.yml`
+- [x] Add `instance_initiated_shutdown_behavior: "terminate"`
+- [x] Install `flock` package
+- [x] Install and start new scripts
+- [x] Replace complex tmux startup with wrapper script call
 
 #### **Step 5: Update Deployment Script**
-- [ ] **File**: `AWS-Deployment/deploy.sh`
-- [ ] Add `--instance-initiated-shutdown-behavior terminate` to EC2 launch
-- [ ] Ensure new scripts are copied to instance
+- [x] **File**: `AWS-Deployment/deploy.sh`
+- [x] Add `--instance-initiated-shutdown-behavior terminate` to EC2 launch
+- [x] Ensure new scripts are copied to instance
 
 ---
 
 ### **Phase 2: DXNN Changes (Minimal)**
 
 #### **Step 6: Add Completion Signal Function**
-- [ ] **File**: `DXNN_test_v2/benchmarker.erl`
-- [ ] Add `completion_signal/0` to exports
-- [ ] Implement completion checkpoint with `mnesia:backup()`
-- [ ] Create completion metadata with timestamp and backup file info
-- [ ] Handle backup errors gracefully
-- [ ] **NO IMDS, NO S3, NO HTTP dependencies**
+- [x] **File**: `DXNN_test_v2/benchmarker.erl`
+- [x] Add `completion_signal/0` to exports
+- [x] Implement completion checkpoint with `mnesia:backup()`
+- [x] Create completion metadata with timestamp and backup file info
+- [x] Handle backup errors gracefully
+- [x] **NO IMDS, NO S3, NO HTTP dependencies**
 
 #### **Step 7: Update Training Loop**
-- [ ] **File**: `DXNN_test_v2/benchmarker.erl`
-- [ ] Call `completion_signal()` when training completes
-- [ ] Ensure completion signal is sent before process ends
-- [ ] Maintain existing termination handling
+- [x] **File**: `DXNN_test_v2/benchmarker.erl`
+- [x] Call `completion_signal()` when training completes
+- [x] Ensure completion signal is sent before process ends
+- [x] Maintain existing termination handling
 
 ---
 
@@ -110,44 +110,44 @@ This guide implements AWS Spot instance support with **minimal DXNN changes** an
 ## ✅ **Acceptance Criteria Checklist**
 
 ### **Idempotency Requirements**
-- [ ] **Lock-based protection**: `flock /var/lock/dxnn.finalize.lock`
-- [ ] **S3 sentinel check**: Exit if `_SUCCESS` exists in S3
-- [ ] **Single execution**: Only one finalization runs per instance
-- [ ] **No duplicate uploads**: Each artifact uploaded exactly once
+- [x] **Lock-based protection**: `flock /var/lock/dxnn.finalize.lock`
+- [x] **S3 sentinel check**: Exit if `_SUCCESS` exists in S3
+- [x] **Single execution**: Only one finalization runs per instance
+- [x] **No duplicate uploads**: Each artifact uploaded exactly once
 
 ### **Termination Requirements**
-- [ ] **EC2 termination behavior**: `InstanceInitiatedShutdownBehavior=terminate`
-- [ ] **Poweroff command**: `poweroff` after successful upload
-- [ ] **Deterministic shutdown**: Instance terminates reliably
-- [ ] **No manual termination**: No `aws ec2 terminate-instances` calls
+- [x] **EC2 termination behavior**: `InstanceInitiatedShutdownBehavior=terminate`
+- [x] **Poweroff command**: `poweroff` after successful upload
+- [x] **Deterministic shutdown**: Instance terminates reliably
+- [x] **No manual termination**: No `aws ec2 terminate-instances` calls
 
 ### **Wrapper Requirements**
-- [ ] **Minimal design**: No polling, no watchdog, no completion detection
-- [ ] **Direct execution**: Run DXNN directly (no tmux) with proper process monitoring
-- [ ] **Exit code capture**: Wait for DXNN exit and capture exit code (`wait $DXNN_PID`)
-- [ ] **Outcome determination**: Distinguish `normal` (exit code 0) vs `interrupted` (non-zero)
-- [ ] **Signal forwarding**: Trap TERM/INT and forward to child
-- [ ] **Single responsibility**: Run DXNN, wait, call finalizer with outcome information
+- [x] **Minimal design**: No polling, no watchdog, no completion detection
+- [x] **Direct execution**: Run DXNN directly (no tmux) with proper process monitoring
+- [x] **Exit code capture**: Wait for DXNN exit and capture exit code (`wait $DXNN_PID`)
+- [x] **Outcome determination**: Distinguish `normal` (exit code 0) vs `interrupted` (non-zero)
+- [x] **Signal forwarding**: Trap TERM/INT and forward to child
+- [x] **Single responsibility**: Run DXNN, wait, call finalizer with outcome information
 
 ### **Finalizer Requirements**
-- [ ] **Exponential backoff**: 7 attempts with 1s, 2s, 4s, 8s, 16s, 32s delays
-- [ ] **S3 sync**: Upload all checkpoints and logs
-- [ ] **Sentinel last**: Write `_SUCCESS` only after all uploads succeed
-- [ ] **Outcome metadata**: Include `completion_status`, `exit_code`, and `reason` in sentinel
-- [ ] **Failure handling**: Clear policy for upload failures
-- [ ] **Logging**: All operations logged to `/var/log/dxnn-run.log` with outcome information
+- [x] **Exponential backoff**: 7 attempts with 1s, 2s, 4s, 8s, 16s, 32s delays
+- [x] **S3 sync**: Upload all checkpoints and logs
+- [x] **Sentinel last**: Write `_SUCCESS` only after all uploads succeed
+- [x] **Outcome metadata**: Include `completion_status`, `exit_code`, and `reason` in sentinel
+- [x] **Failure handling**: Clear policy for upload failures
+- [x] **Logging**: All operations logged to `/var/log/dxnn-run.log` with outcome information
 
 ### **DXNN Minimalism**
-- [ ] **Single function**: Only `completion_signal/0` added
-- [ ] **No external dependencies**: No S3, IMDS, or HTTP code
-- [ ] **Existing checkpoint logic**: Reuse `mnesia:backup()` mechanism
-- [ ] **Graceful integration**: Minimal changes to existing loop
+- [x] **Single function**: Only `completion_signal/0` added
+- [x] **No external dependencies**: No S3, IMDS, or HTTP code
+- [x] **Existing checkpoint logic**: Reuse `mnesia:backup()` mechanism
+- [x] **Graceful integration**: Minimal changes to existing loop
 
 ### **Production Hardening**
-- [ ] **Lock mechanism**: Prevents race conditions
-- [ ] **Retry logic**: Handles transient S3 failures
-- [ ] **Error handling**: Graceful degradation on failures
-- [ ] **Logging**: Complete audit trail for postmortems
+- [x] **Lock mechanism**: Prevents race conditions
+- [x] **Retry logic**: Handles transient S3 failures
+- [x] **Error handling**: Graceful degradation on failures
+- [x] **Logging**: Complete audit trail for postmortems
 
 ---
 

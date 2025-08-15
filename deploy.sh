@@ -285,6 +285,13 @@ launch_instance() {
         run_cmd="$run_cmd --placement AvailabilityZone=\"$AVAILABILITY_ZONE\""
     fi
     
+    # Add instance-initiated shutdown behavior for spot instances
+    SHUTDOWN_BEHAVIOR=$(yq e '.aws.instance_initiated_shutdown_behavior' "$CONFIG_FILE" 2>/dev/null)
+    if [[ -n "$SHUTDOWN_BEHAVIOR" && "$SHUTDOWN_BEHAVIOR" != "null" ]]; then
+        run_cmd="$run_cmd --instance-initiated-shutdown-behavior \"$SHUTDOWN_BEHAVIOR\""
+        log_info "Instance shutdown behavior: $SHUTDOWN_BEHAVIOR"
+    fi
+    
     run_cmd="$run_cmd --query 'Instances[0].InstanceId' --output text"
     
     instance_id=$(eval $run_cmd)
@@ -344,6 +351,16 @@ generate_user_data() {
             yq e '.application.setup_commands[]' "$CONFIG_FILE" | while read -r cmd; do
                 echo "$cmd"
             done
+            
+            # Add new finalizer and wrapper scripts
+            echo "# Install finalizer and wrapper scripts"
+            echo "cat > /tmp/finalize_run.sh << 'FINALIZER_SCRIPT_EOF'"
+            cat scripts/finalize_run.sh
+            echo "FINALIZER_SCRIPT_EOF"
+            
+            echo "cat > /tmp/dxnn-wrapper.sh << 'WRAPPER_SCRIPT_EOF'"
+            cat scripts/dxnn-wrapper.sh
+            echo "WRAPPER_SCRIPT_EOF"
             
             # Add spot watcher files if spot handling is enabled
             if [[ "$SPOT_ENABLED" == "true" ]]; then

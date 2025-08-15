@@ -4,9 +4,9 @@ metadata:
   version: "1.0"
 
 aws:
-  instance_type: "c5.4xlarge"  # Upgraded for production workload
+  instance_type: "c7i.4xlarge"  # c7i.4xlarge
   market_type: "spot"
-  spot_max_price: "0.50"  # Higher limit for production availability
+  spot_max_price: "0.38"  # Higher limit for production availability
   region: "us-east-1"
   availability_zone: "us-east-1a"
   ami_id: "ami-020cba7c55df1f615"  # Ubuntu 24.04 LTS
@@ -16,7 +16,7 @@ aws:
 spot_handling:
   enabled: true
   checkpoint_deadline_seconds: 60  # From IMDS detection
-  poll_interval_seconds: 2
+  poll_interval_seconds: 4
   s3_bucket: "dxnn-checkpoints"
   s3_prefix: "dxnn-prod"  # Separate prefix for production
   job_id: "dxnn-prod-training-001"  # Production job ID

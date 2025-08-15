@@ -12,6 +12,7 @@ aws:
   ami_id: "ami-020cba7c55df1f615"
   ssh_user: "ubuntu"
   iam_instance_profile: "DXNN-Spot-Profile"
+  instance_initiated_shutdown_behavior: "terminate"
 
 spot_handling:
   enabled: true
@@ -30,7 +31,7 @@ application:
   type: "dxnn-spot"
   setup_commands:
     - "apt-get update -y"
-    - "apt-get install -y erlang git vim htop tree build-essential tmux chrony"
+    - "apt-get install -y erlang git vim htop tree build-essential tmux chrony util-linux"
     - "systemctl enable chrony && systemctl start chrony"
     - "curl -L https://github.com/mikefarah/yq/releases/download/v4.35.1/yq_linux_amd64 -o /usr/local/bin/yq && chmod +x /usr/local/bin/yq"
     - "mkdir -p /var/lib/dxnn/checkpoints /var/log /run"
@@ -40,23 +41,25 @@ application:
       cd /home/ubuntu
       git clone https://github.com/qendro/DXNN-Trader-v2.git dxnn-trader
       chown -R ubuntu:ubuntu /home/ubuntu/dxnn-trader
+      
+      # Install new scripts
+      cp /tmp/finalize_run.sh /usr/local/bin/finalize_run.sh
+      cp /tmp/dxnn-wrapper.sh /usr/local/bin/dxnn-wrapper.sh
+      chmod +x /usr/local/bin/finalize_run.sh /usr/local/bin/dxnn-wrapper.sh
+      
+      # Set environment variables for wrapper
+      export S3_BUCKET="dxnn-checkpoints"
+      export S3_PREFIX="dxnn"
+      export JOB_ID="dxnn-training-001"
+      export RUN_ID="$(date -u +%Y%m%d-%H%M%SZ)"
+      
+      # Start DXNN with wrapper (replaces tmux startup)
       su - ubuntu -c '
-        cd /home/ubuntu/dxnn-trader
-        tmux new-session -d -s trader bash -c "  
-          erl -noshell -eval \"
-            mnesia:create_schema([node()]),
-            mnesia:start(),
-            make:all(),
-            fx:init(),
-            fx:start(),
-            timer:sleep(5000),
-            polis:create(),
-            polis:start(),
-            polis:sync(),
-            benchmarker:maybe_restore(),
-            benchmarker:start(sliding_window_5)
-          \"
-        "
+        export S3_BUCKET="dxnn-checkpoints"
+        export S3_PREFIX="dxnn"
+        export JOB_ID="dxnn-training-001"
+        export RUN_ID="$(date -u +%Y%m%d-%H%M%SZ)"
+        /usr/local/bin/dxnn-wrapper.sh
       '
 
 networking:

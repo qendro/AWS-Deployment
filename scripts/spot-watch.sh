@@ -211,38 +211,24 @@ main() {
         fi
     fi
     
-    # Find latest checkpoint
-    latest_checkpoint=$(ls -1t "$CHECKPOINT_DIR"/checkpoint-*.dmp 2>/dev/null | head -1)
+    # Call finalizer with interruption status
+    log "STATE: FINALIZE_INTERRUPTION"
     
-    if [[ -n "$latest_checkpoint" ]]; then
-        # Create metadata with required fields
-        instance_id=$(curl -s -H "X-aws-ec2-metadata-token: $token" "$IMDS/latest/meta-data/instance-id")
-        timestamp=$(date -u -Iseconds)Z
-        metadata_file="${latest_checkpoint%.dmp}.metadata.json"
-        
-        cat > "$metadata_file" << EOF
-{
-    "job_id": "$JOB_ID",
-    "instance_id": "$instance_id",
-    "action": "interruption",
-    "utc": "$timestamp",
-    "version": "1.0"
-}
-EOF
-        
-        # Upload to S3 with deterministic keying (UTC with trailing Z)
-        s3_key="$S3_PREFIX/$JOB_ID/$(date -u +%Y/%m/%d/%H%M%SZ)/$(basename "$latest_checkpoint")"
-        metadata_key="$S3_PREFIX/$JOB_ID/$(date -u +%Y/%m/%d/%H%M%SZ)/$(basename "$metadata_file")"
-        
-        upload_checkpoint "$latest_checkpoint" "$s3_key" "$token" || true
-        upload_checkpoint "$metadata_file" "$metadata_key" "$token" || true
+    # Set environment variables for finalizer
+    export COMPLETION_STATUS="interrupted"
+    export EXIT_CODE="1"
+    export S3_BUCKET="$S3_BUCKET"
+    export S3_PREFIX="$S3_PREFIX"
+    export JOB_ID="$JOB_ID"
+    export RUN_ID="${RUN_ID:-$(date -u +%Y%m%d-%H%M%SZ)}"
+    
+    # Call finalizer script (handles upload and termination)
+    if [[ -x "/usr/local/bin/finalize_run.sh" ]]; then
+        /usr/local/bin/finalize_run.sh
     else
-        log "No checkpoint file found"
+        log "ERROR: Finalizer script not found, falling back to shutdown"
+        shutdown -h now
     fi
-    
-    # Graceful shutdown
-    log "STATE: SHUTDOWN"
-    shutdown -h now
 }
 
 # Cleanup on exit
