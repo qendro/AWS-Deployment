@@ -136,7 +136,7 @@ create_security_group() {
         --group-name "$group_name" \
         --protocol tcp \
         --port 22 \
-        --cidr 0.0.0.0/0
+        --cidr 0.0.0.0/0 >/dev/null
     
     log_success "Security group created: $group_name"
 }

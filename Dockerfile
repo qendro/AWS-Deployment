@@ -28,7 +28,9 @@ RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o "awscliv
 WORKDIR /aws-deployment
 
 # Copy deployment files
-COPY deploy.sh scripts/ config/ ./
+COPY deploy.sh ./
+COPY scripts/ ./scripts/
+COPY config/ ./config/
 RUN chmod +x deploy.sh && find scripts/ -name "*.sh" -exec chmod +x {} \;
 
 # Set default entrypoint
