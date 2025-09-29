@@ -8,6 +8,10 @@ INSTANCE_IP="${1:-54.166.246.241}"
 SSH_KEY="${2:-output/aws-deployment-key-20250812-161307-key.pem}"
 SSH_OPTS="-i $SSH_KEY -o StrictHostKeyChecking=no"
 
+S3_BUCKET="${S3_BUCKET:-dxnn-checkpoints}"
+S3_PREFIX="${S3_PREFIX:-dxnn-prod}"
+S3_REGION="${S3_REGION:-us-east-1}"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -104,7 +108,11 @@ monitor_s3() {
     ssh $SSH_OPTS ubuntu@$INSTANCE_IP "
     echo -e '${BLUE}Testing S3 Upload:${NC}'
     echo 'Monitor test - $(date)' > /tmp/monitor-test.txt
-    if /usr/local/bin/simple-s3-upload.sh /tmp/monitor-test.txt dxnn-prod/monitoring/test-$(date +%s).txt; then
+    export AWS_DEFAULT_REGION='${S3_REGION}'
+    if ! command -v aws >/dev/null 2>&1; then
+        echo -e '${RED}S3 Upload: AWS CLI not installed${NC}'
+        echo -e '${YELLOW}Hint:${NC} curl https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o awscliv2.zip && unzip awscliv2.zip && sudo ./aws/install'
+    elif aws s3 cp /tmp/monitor-test.txt s3://${S3_BUCKET}/${S3_PREFIX}/monitoring/test-\$(date +%s).txt --no-progress --only-show-errors >/dev/null 2>&1; then
         echo -e '${GREEN}S3 Upload: OK${NC}'
     else
         echo -e '${RED}S3 Upload: FAILED${NC}'
