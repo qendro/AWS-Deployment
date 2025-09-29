@@ -11,7 +11,6 @@ Deploy DXNN neural network training on AWS spot instances with automatic interru
 
 ### 2. Deploy DXNN Spot Instance
 
-./docker-deploy.sh -c config/dxnn-spot.yml         # Development spot instance
 ./docker-deploy.sh -c config/dxnn-spot-prod.yml    # Production spot instance
 
 ### 3. Monitor Your Training
@@ -158,17 +157,30 @@ To remove all AWS resources created by this tool:
 ./docker-deploy.sh -c config/dxnn-spot-prod.yml
 ```
 
+
 **What happens automatically:**
 - New instance launches and finds latest checkpoint in S3
 - DXNN resumes training from last saved state
 - No manual intervention needed
+
+---
+**Deployment Note:**
+
+The deployment process now uses a trigger file (`/home/ubuntu/SCRIPTS_READY`) to ensure all required scripts are uploaded before the DXNN application autostarts. The instance waits for this file before launching the training process. This guarantees that all scripts are present and executable, preventing race conditions during setup.
+
+If you modify or add scripts, make sure the deployment process completes the upload and creates the `SCRIPTS_READY` file before expecting the application to start automatically.
+
+---
 
 **Manual verification (optional):**
 ```bash
 ssh -i output/your-key.pem ubuntu@NEW_IP
 ls -la /var/lib/dxnn/checkpoints/          # Check restored files
 sudo tail -f /var/log/spot-restore.log     # View restore logs
+sudo tail -f /var/log/cloud-init-output.log
 tmux attach -t trader                      # Monitor resumed training
+
+Detach from tmux: Ctrl+b then d
 ```
 
 ## 🎯 Example Workflow

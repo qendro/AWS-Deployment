@@ -85,9 +85,6 @@ parse_args() {
 }
 
 
-
-
-
 # Create necessary directories
 create_directories() {
     mkdir -p "$OUTPUT_DIR"
@@ -225,6 +222,81 @@ EOF
     log_info "Launch logged to $log_file"
 }
 
+# Wait for SSH to be available
+wait_for_ssh() {
+    local public_ip="$1"
+    local ssh_key_path="$2"
+    local max_attempts=30
+    
+    log_info "Waiting for SSH access..."
+    log_info "SSH command: ssh -i $ssh_key_path $SSH_USER@$public_ip"
+    for i in $(seq 1 $max_attempts); do
+        if ssh -i "$ssh_key_path" -o ConnectTimeout=10 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$SSH_USER@$public_ip" "echo 'SSH ready'" >/dev/null 2>&1; then
+            log_success "SSH connection established"
+            return 0
+        fi
+        log_info "SSH attempt $i/$max_attempts..."
+        sleep 10
+    done
+    log_error "SSH connection failed after $max_attempts attempts"
+    return 1
+}
+
+# Upload scripts to instance via SCP
+upload_scripts() {
+    local public_ip="$1"
+    local ssh_key_path="$2"
+    
+    # Wait for SSH to be ready
+    wait_for_ssh "$public_ip" "$ssh_key_path" || return 1
+    
+    log_info "Uploading scripts to instance..."
+    
+    # Upload all scripts
+    scp -i "$ssh_key_path" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null scripts/*.sh "$SSH_USER@$public_ip:/tmp/" || {
+        log_error "Failed to upload scripts"
+        return 1
+    }
+    
+    # Upload service files if they exist
+    [[ -f scripts/*.service ]] && scp -i "$ssh_key_path" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null scripts/*.service "$SSH_USER@$public_ip:/tmp/" 2>/dev/null
+    
+    # Install and configure scripts
+    ssh -i "$ssh_key_path" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$SSH_USER@$public_ip" << EOF
+        # Install scripts
+        sudo cp /tmp/*.sh /usr/local/bin/ 2>/dev/null || true
+        sudo chmod +x /usr/local/bin/*.sh
+
+        # Configure spot handling if enabled
+        if [[ "$SPOT_ENABLED" == "true" ]]; then
+            # Configure spot-watch.sh with deployment-specific values
+            sudo sed -i "s/CHECKPOINT_DEADLINE=60/CHECKPOINT_DEADLINE=$CHECKPOINT_DEADLINE/g" /usr/local/bin/spot-watch.sh
+            sudo sed -i "s/POLL_INTERVAL=2/POLL_INTERVAL=$POLL_INTERVAL/g" /usr/local/bin/spot-watch.sh
+            sudo sed -i "s|S3_BUCKET=\"dxnn-checkpoints\"|S3_BUCKET=\"$S3_BUCKET\"|g" /usr/local/bin/spot-watch.sh
+            sudo sed -i "s|S3_PREFIX=\"dxnn\"|S3_PREFIX=\"$S3_PREFIX\"|g" /usr/local/bin/spot-watch.sh
+            sudo sed -i "s|JOB_ID=\"dxnn-training-001\"|JOB_ID=\"$JOB_ID\"|g" /usr/local/bin/spot-watch.sh
+            sudo sed -i "s|CONTAINER_NAME=\"dxnn-app\"|CONTAINER_NAME=\"$CONTAINER_NAME\"|g" /usr/local/bin/spot-watch.sh
+            sudo sed -i "s|ERLANG_NODE=\"dxnn@127.0.0.1\"|ERLANG_NODE=\"$ERLANG_NODE\"|g" /usr/local/bin/spot-watch.sh
+            sudo sed -i "s|ERLANG_COOKIE_FILE=\"/var/lib/dxnn/.erlang.cookie\"|ERLANG_COOKIE_FILE=\"$ERLANG_COOKIE_FILE\"|g" /usr/local/bin/spot-watch.sh
+            sudo sed -i "s/USE_REBALANCE=false/USE_REBALANCE=$USE_REBALANCE/g" /usr/local/bin/spot-watch.sh
+
+            # Install service files
+            sudo cp /tmp/*.service /etc/systemd/system/ 2>/dev/null || true
+            sudo systemctl daemon-reload
+            sudo systemctl enable spot-watch 2>/dev/null || true
+            sudo systemctl start spot-watch 2>/dev/null || true
+        fi
+
+        # Create SCRIPTS_READY trigger file for user-data autostart
+        touch /home/ubuntu/SCRIPTS_READY
+
+        # Cleanup temp files
+        rm -f /tmp/*.sh /tmp/*.service
+EOF
+    
+    log_success "Scripts uploaded and configured"
+}
+
 # Launch EC2 instance
 launch_instance() {
     local instance_type="${INSTANCE_TYPE:-$DEFAULT_INSTANCE_TYPE}"
@@ -311,10 +383,13 @@ launch_instance() {
         --query 'Reservations[0].Instances[0].PublicIpAddress' \
         --output text)
     
+    # Upload and configure scripts via SCP
+    upload_scripts "$public_ip" "$OUTPUT_DIR/${key_name}-key.pem"
+    
     # Save deployment info
     local info_file="$OUTPUT_DIR/deployment-$timestamp.json"
     # Use relative path for SSH key in info and log output
-    local ssh_key_path="./output/${key_name}-key.pem"
+    local ssh_key_path_relative="./output/${key_name}-key.pem"
     cat > "$info_file" << EOF
 {
     "timestamp": "$timestamp",
@@ -325,18 +400,18 @@ launch_instance() {
     "public_ip": "$public_ip",
     "key_name": "$key_name",
     "security_group": "$sg_name",
-    "ssh_key_file": "$ssh_key_path",
-    "ssh_command": "ssh -i $ssh_key_path $SSH_USER@$public_ip"
+    "ssh_key_file": "$ssh_key_path_relative",
+    "ssh_command": "ssh -i $ssh_key_path_relative $SSH_USER@$public_ip"
 }
 EOF
     
     # Log launch details
-    log_launch_details "$instance_id" "$public_ip" "$instance_type" "$ssh_key_path" "$SSH_USER" "$app_type" "$MARKET_TYPE" "$SPOT_MAX_PRICE"
+    log_launch_details "$instance_id" "$public_ip" "$instance_type" "$ssh_key_path_relative" "$SSH_USER" "$app_type" "$MARKET_TYPE" "$SPOT_MAX_PRICE"
     
     log_success "Deployment complete!"
     log_info "Instance ID: $instance_id"
     log_info "Public IP: $public_ip"
-    log_info "SSH Command: ssh -i $ssh_key_path $SSH_USER@$public_ip"
+    log_info "SSH Command: ssh -i $ssh_key_path_relative $SSH_USER@$public_ip"
     log_info "Deployment info saved to: $info_file"
 }
 
@@ -352,67 +427,8 @@ generate_user_data() {
                 echo "$cmd"
             done
             
-            # Add new finalizer and wrapper scripts
-            echo "# Install finalizer and wrapper scripts"
-            echo "cat > /tmp/finalize_run.sh << 'FINALIZER_SCRIPT_EOF'"
-            cat scripts/finalize_run.sh
-            echo "FINALIZER_SCRIPT_EOF"
-            
-            echo "cat > /tmp/dxnn-wrapper.sh << 'WRAPPER_SCRIPT_EOF'"
-            cat scripts/dxnn-wrapper.sh
-            echo "WRAPPER_SCRIPT_EOF"
-            
-            # Add spot watcher files if spot handling is enabled
-            if [[ "$SPOT_ENABLED" == "true" ]]; then
-                echo "# Install spot watcher and control shim"
-                echo "cat > /usr/local/bin/spot-watch.sh << 'SPOT_SCRIPT_EOF'"
-                
-                # Template the spot-watch.sh with config values
-                sed -e "s/CHECKPOINT_DEADLINE=60/CHECKPOINT_DEADLINE=$CHECKPOINT_DEADLINE/g" \
-                    -e "s/POLL_INTERVAL=2/POLL_INTERVAL=$POLL_INTERVAL/g" \
-                    -e "s|S3_BUCKET=\"dxnn-checkpoints\"|S3_BUCKET=\"$S3_BUCKET\"|g" \
-                    -e "s|S3_PREFIX=\"dxnn\"|S3_PREFIX=\"$S3_PREFIX\"|g" \
-                    -e "s|JOB_ID=\"dxnn-training-001\"|JOB_ID=\"$JOB_ID\"|g" \
-                    -e "s|CONTAINER_NAME=\"dxnn-app\"|CONTAINER_NAME=\"$CONTAINER_NAME\"|g" \
-                    -e "s|ERLANG_NODE=\"dxnn@127.0.0.1\"|ERLANG_NODE=\"$ERLANG_NODE\"|g" \
-                    -e "s|ERLANG_COOKIE_FILE=\"/var/lib/dxnn/.erlang.cookie\"|ERLANG_COOKIE_FILE=\"$ERLANG_COOKIE_FILE\"|g" \
-                    -e "s/USE_REBALANCE=false/USE_REBALANCE=$USE_REBALANCE/g" \
-                    scripts/spot-watch.sh
-                
-                echo "SPOT_SCRIPT_EOF"
-                
-                echo "cat > /usr/local/bin/dxnn_ctl << 'CTL_SCRIPT_EOF'"
-                sed -e "s|ERLANG_NODE=\"dxnn@127.0.0.1\"|ERLANG_NODE=\"$ERLANG_NODE\"|g" \
-                    -e "s|ERLANG_COOKIE_FILE=\"/var/lib/dxnn/.erlang.cookie\"|ERLANG_COOKIE_FILE=\"$ERLANG_COOKIE_FILE\"|g" \
-                    scripts/dxnn_ctl
-                echo "CTL_SCRIPT_EOF"
-                
-                echo "cat > /etc/systemd/system/spot-watch.service << 'SERVICE_EOF'"
-                cat scripts/spot-watch.service
-                echo "SERVICE_EOF"
-                
-                echo "chmod +x /usr/local/bin/spot-watch.sh /usr/local/bin/dxnn_ctl"
-                echo "mkdir -p /run"
-                echo "systemctl daemon-reload"
-                
-                # Start watcher after container is running
-                echo "systemctl enable spot-watch"
-                echo "systemctl start spot-watch"
-                
-                # Add restore from S3 if enabled
-                if [[ "$RESTORE_FROM_S3" == "true" ]]; then
-                    echo "cat > /usr/local/bin/restore-from-s3.sh << 'RESTORE_SCRIPT_EOF'"
-                    sed -e "s|S3_BUCKET=\"dxnn-checkpoints\"|S3_BUCKET=\"$S3_BUCKET\"|g" \
-                        -e "s|S3_PREFIX=\"dxnn\"|S3_PREFIX=\"$S3_PREFIX\"|g" \
-                        -e "s|JOB_ID=\"dxnn-training-001\"|JOB_ID=\"$JOB_ID\"|g" \
-                        -e "s|CONTAINER_NAME=\"dxnn-app\"|CONTAINER_NAME=\"$CONTAINER_NAME\"|g" \
-                        scripts/restore-from-s3.sh
-                    echo "RESTORE_SCRIPT_EOF"
-                    echo "chmod +x /usr/local/bin/restore-from-s3.sh"
-                    echo "/usr/local/bin/restore-from-s3.sh"
-                fi
-            fi
-            
+            echo "# Scripts will be uploaded via SCP after instance is ready"
+
             # Mark setup complete (try for both ubuntu and ec2-user)
             echo 'touch /home/ubuntu/SETUP_COMPLETE || touch /home/ec2-user/SETUP_COMPLETE'
             return
@@ -579,6 +595,19 @@ main() {
     
     # Set AWS region
     export AWS_DEFAULT_REGION="$REGION"
+    
+    # Create S3 bucket if it doesn't exist
+    if [[ "$SPOT_ENABLED" == "true" ]]; then
+        if ! aws s3 ls "s3://$S3_BUCKET" >/dev/null 2>&1; then
+            log_info "Creating S3 bucket: $S3_BUCKET"
+            aws s3 mb "s3://$S3_BUCKET" --region "$REGION"
+            log_success "S3 bucket created: $S3_BUCKET"
+        fi
+        
+        # S3 will be used only for checkpoint storage
+        log_info "S3 folder structure:"
+        log_info "  s3://$S3_BUCKET/$S3_PREFIX/$JOB_ID/RUN_ID/ (checkpoints & logs)"
+    fi
     
     launch_instance
 }

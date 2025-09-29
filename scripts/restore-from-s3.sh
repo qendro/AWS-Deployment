@@ -1,124 +1,154 @@
 #!/bin/bash
 set -euo pipefail
 
+# Restore DXNN artifacts from S3 using simple-s3-download.sh
+
 S3_BUCKET="dxnn-checkpoints"
 S3_PREFIX="dxnn"
 JOB_ID="dxnn-training-001"
-CHECKPOINT_DIR="/var/lib/dxnn/checkpoints"
-CONTAINER_NAME="dxnn-app"
-LOG_FILE="/var/log/spot-restore.log"
-IMDS="http://169.254.169.254"
+RUN_ID=""
+DXNN_DIR="/home/ubuntu/dxnn-trader"
+RESTORE_LOG="/var/log/dxnn-restore.log"
+DOWNLOAD_BIN="/usr/local/bin/simple-s3-download.sh"
+
+# Allow optional runtime overrides
+if [[ -n "${RESTORE_S3_BUCKET:-}" ]]; then
+    S3_BUCKET="$RESTORE_S3_BUCKET"
+fi
+if [[ -n "${RESTORE_S3_PREFIX:-}" ]]; then
+    S3_PREFIX="$RESTORE_S3_PREFIX"
+fi
+if [[ -n "${RESTORE_JOB_ID:-}" ]]; then
+    JOB_ID="$RESTORE_JOB_ID"
+fi
+if [[ -n "${RESTORE_RUN_ID:-}" ]]; then
+    RUN_ID="$RESTORE_RUN_ID"
+fi
+if [[ -n "${RESTORE_DXNN_DIR:-}" ]]; then
+    DXNN_DIR="$RESTORE_DXNN_DIR"
+fi
+
+export S3_BUCKET S3_PREFIX JOB_ID RUN_ID DXNN_DIR
 
 log() {
-    echo "[UTC $(date -u -Iseconds)] $1" >> "$LOG_FILE"
+    local level="$1"
+    shift
+    printf '[%s] %s: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$level" "$*" | tee -a "$RESTORE_LOG"
 }
 
-# Get IMDSv2 token
-get_token() {
-    curl -sS -X PUT "$IMDS/latest/api/token" \
-        -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" 2>/dev/null || true
-}
-
-# Simple S3 GET using the dedicated download script
-s3_get() {
-    local s3_key="$1"
-    local output_file="$2"
-    local token="$3"
-    
-    # Use the simple-s3-download.sh script
-    if /usr/local/bin/simple-s3-download.sh "$s3_key" "$output_file" >/dev/null 2>&1; then
-        return 0
-    else
+require_downloader() {
+    if [[ ! -x "$DOWNLOAD_BIN" ]]; then
+        log "WARN" "Downloader not found at $DOWNLOAD_BIN - skipping restore"
         return 1
     fi
+    return 0
 }
 
-# Find latest checkpoint in S3 for the job_id
-find_latest_s3_checkpoint() {
-    local token="$1"
-    
-    # For now, we'll use a simple approach since we know the structure
-    # In production, you'd want to list the S3 bucket contents
-    log "INFO: Looking for latest checkpoint in S3 for job_id: $JOB_ID"
-    
-    # Try to find the checkpoint we uploaded earlier
-    # This is a simplified approach - in production you'd list the bucket
-    local test_key="$S3_PREFIX/$JOB_ID/2025/08/12/155913Z/checkpoint-1755014342.dmp"
-    local test_metadata_key="$S3_PREFIX/$JOB_ID/2025/08/12/155913Z/checkpoint-1755014342.metadata.json"
-    
-    # Try to download the test checkpoint
-    if s3_get "$test_key" "/tmp/test_checkpoint.dmp" "$token"; then
-        if s3_get "$test_metadata_key" "/tmp/test_metadata.json" "$token"; then
-            echo "$test_key"
-            return 0
-        fi
+resolve_run_id() {
+    if [[ -n "$RUN_ID" ]]; then
+        log "INFO" "Using provided RUN_ID=$RUN_ID"
+        return 0
     fi
-    
+
+    local pointer_key="$S3_PREFIX/$JOB_ID/_LATEST_RUN"
+    local pointer_tmp
+    pointer_tmp=$(mktemp)
+
+    if "$DOWNLOAD_BIN" "$pointer_key" "$pointer_tmp" >/dev/null 2>&1; then
+        if command -v jq >/dev/null 2>&1; then
+            RUN_ID=$(jq -r '.run_id // empty' "$pointer_tmp")
+        else
+            RUN_ID=$(sed -n 's/.*"run_id"[[:space:]]*:[[:space:]]*"\([^\"]*\)".*/\1/p' "$pointer_tmp" | head -n1)
+        fi
+        rm -f "$pointer_tmp"
+
+        if [[ -z "$RUN_ID" ]]; then
+            log "WARN" "Latest pointer file present but missing run_id"
+            return 1
+        fi
+        log "INFO" "Resolved RUN_ID=$RUN_ID from latest pointer"
+        return 0
+    fi
+
+    rm -f "$pointer_tmp"
+    log "INFO" "No latest run pointer found - skipping restore"
     return 1
 }
 
-# Main restore logic
-main() {
-    log "INFO: Starting S3 restore process"
-    
-    # Get IMDSv2 token
-    token=$(get_token)
-    if [[ -z "$token" ]]; then
-        log "ERROR: Failed to get IMDSv2 token"
+restore_manifest() {
+    local manifest_key="$S3_PREFIX/$JOB_ID/$RUN_ID/_MANIFEST"
+    local manifest_tmp
+    manifest_tmp=$(mktemp)
+
+    if ! "$DOWNLOAD_BIN" "$manifest_key" "$manifest_tmp" >/dev/null 2>&1; then
+        log "INFO" "Manifest not found at s3://$S3_BUCKET/$manifest_key - skipping restore"
+        rm -f "$manifest_tmp"
         return 1
     fi
-    
-    # Try to find latest checkpoint in S3
-    if latest_s3_key=$(find_latest_s3_checkpoint "$token"); then
-        log "S3_SOURCE: Found checkpoint in S3: $latest_s3_key"
-        
-        # Download checkpoint and metadata
-        local checkpoint_file="$CHECKPOINT_DIR/$(basename "$latest_s3_key")"
-        local metadata_key="${latest_s3_key%.dmp}.metadata.json"
-        local metadata_file="${checkpoint_file%.dmp}.metadata.json"
-        
-        if s3_get "$latest_s3_key" "$checkpoint_file" "$token" && \
-           s3_get "$metadata_key" "$metadata_file" "$token"; then
-            
-            # Verify metadata has correct job_id
-            if jq -e ".job_id == \"$JOB_ID\"" "$metadata_file" >/dev/null 2>&1; then
-                log "S3_SOURCE: Successfully restored checkpoint from S3"
-                log "RESTORE_OK: from S3"
-                return 0
-            else
-                log "ERROR: Metadata job_id mismatch"
-                rm -f "$checkpoint_file" "$metadata_file"
+
+    while IFS=$'\t' read -r file_mode relative_path || [[ -n "${file_mode:-}" ]]; do
+        if [[ -z "${relative_path:-}" ]]; then
+            relative_path="$file_mode"
+            file_mode="0644"
+        fi
+        [[ -z "${relative_path:-}" ]] && continue
+        local target_path="$DXNN_DIR/$relative_path"
+        local target_dir
+        target_dir=$(dirname "$target_path")
+        mkdir -p "$target_dir"
+
+        local object_key="$S3_PREFIX/$JOB_ID/$RUN_ID/$relative_path"
+        if "$DOWNLOAD_BIN" "$object_key" "$target_path" >/dev/null 2>&1; then
+            log "INFO" "Restored $relative_path"
+            if [[ -n "${file_mode:-}" && "$file_mode" =~ ^[0-7]{3,4}$ ]]; then
+                chmod "$file_mode" "$target_path" 2>/dev/null || true
             fi
         else
-            log "ERROR: Failed to download checkpoint from S3"
+            log "ERROR" "Failed to download $relative_path"
+            rm -f "$manifest_tmp"
+            return 2
         fi
-    else
-        log "INFO: No checkpoint found in S3"
-    fi
-    
-    # Local fallback only if S3 unavailable and local has valid metadata
-    local_checkpoint=$(ls -1t "$CHECKPOINT_DIR"/checkpoint-*.dmp 2>/dev/null | head -1)
-    if [[ -n "$local_checkpoint" ]]; then
-        metadata_file="${local_checkpoint%.dmp}.metadata.json"
-        if [[ -f "$metadata_file" ]] && jq -e '.job_id' "$metadata_file" >/dev/null 2>&1; then
-            log "LOCAL_SOURCE: Using local checkpoint with valid metadata"
-            log "RESTORE_OK: from local"
-            return 0
-        else
-            log "LOCAL_SOURCE: Skipping local checkpoint (no valid metadata)"
-        fi
-    else
-        log "LOCAL_SOURCE: No local checkpoint found"
-    fi
-    
-    log "INFO: No valid checkpoint found for restore"
-    return 1
+    done < "$manifest_tmp"
+
+    rm -f "$manifest_tmp"
+    return 0
 }
 
-# Ensure checkpoint directory exists and has correct permissions
-mkdir -p "$CHECKPOINT_DIR"
-chown ubuntu:ubuntu "$CHECKPOINT_DIR"
+main() {
+    log "INFO" "Starting S3 restore to $DXNN_DIR"
+    if ! require_downloader; then
+        log "INFO" "Restore skipped because downloader is unavailable"
+        exit 0
+    fi
 
-# Run main function
-main
+    if ! resolve_run_id; then
+        log "INFO" "Restore skipped - no previous run id"
+        exit 0
+    fi
 
+    if restore_manifest; then
+        status=0
+    else
+        status=$?
+    fi
+    case "$status" in
+        0)
+            log "INFO" "Restore completed for RUN_ID=$RUN_ID"
+            ;;
+        1)
+            log "INFO" "Restore skipped - manifest missing"
+            ;;
+        2)
+            log "ERROR" "Restore failed to download one or more files"
+            exit 1
+            ;;
+        *)
+            log "ERROR" "Restore encountered an unexpected status ($status)"
+            exit 1
+            ;;
+    esac
+}
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi

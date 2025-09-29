@@ -30,6 +30,12 @@ get_credentials() {
     local role_name
     local credentials
     
+    # Check if jq is available
+    if ! command -v jq >/dev/null 2>&1; then
+        echo "ERROR: jq is required but not installed" >&2
+        return 1
+    fi
+    
     # Get role name
     role_name=$(curl -s -H "X-aws-ec2-metadata-token: $token" \
         "$IMDS/latest/meta-data/iam/security-credentials/")
@@ -94,18 +100,22 @@ s3_put() {
     
 
     
-    # Canonical request
+    # Canonical request - headers must be sorted alphabetically
     local canonical_uri="/$s3_key"
     local canonical_querystring=""
-    local canonical_headers="content-length:$content_length"$'\n'"content-type:$content_type"$'\n'"host:$host"$'\n'"x-amz-content-sha256:$payload_hash"$'\n'"x-amz-date:$timestamp"
-    if [[ -n "$SESSION_TOKEN" ]]; then
-        canonical_headers="$canonical_headers"$'\n'"x-amz-security-token:$SESSION_TOKEN"
-    fi
-    canonical_headers="$canonical_headers"$'\n'
+    
+    # Build canonical headers in alphabetical order
+    local canonical_headers="content-length:$content_length"$'\n'
+    canonical_headers+="content-type:$content_type"$'\n'
+    canonical_headers+="host:$host"$'\n'
+    canonical_headers+="x-amz-content-sha256:$payload_hash"$'\n'
+    canonical_headers+="x-amz-date:$timestamp"$'\n'
     
     local signed_headers="content-length;content-type;host;x-amz-content-sha256;x-amz-date"
-    if [[ -n "$SESSION_TOKEN" ]]; then
-        signed_headers="$signed_headers;x-amz-security-token"
+    
+    if [[ -n "$SESSION_TOKEN" && "$SESSION_TOKEN" != "null" ]]; then
+        canonical_headers+="x-amz-security-token:$SESSION_TOKEN"$'\n'
+        signed_headers+=";x-amz-security-token"
     fi
     
     local canonical_request="$http_method"$'\n'"$canonical_uri"$'\n'"$canonical_querystring"$'\n'"$canonical_headers"$'\n'"$signed_headers"$'\n'"$payload_hash"
@@ -115,17 +125,30 @@ s3_put() {
     local credential_scope="$date_stamp/$S3_REGION/$service/aws4_request"
     local string_to_sign="$algorithm"$'\n'"$timestamp"$'\n'"$credential_scope"$'\n'"$(sha256 "$canonical_request")"
     
-    # Sign the string
-    local k_date
-    k_date=$(printf '%s' "$date_stamp" | openssl dgst -sha256 -hmac "AWS4$SECRET_ACCESS_KEY" -binary)
-    local k_region
-    k_region=$(printf '%s' "$S3_REGION" | openssl dgst -sha256 -hmac "$k_date" -binary)
-    local k_service
-    k_service=$(printf '%s' "$service" | openssl dgst -sha256 -hmac "$k_region" -binary)
-    local k_signing
-    k_signing=$(printf '%s' "aws4_request" | openssl dgst -sha256 -hmac "$k_service" -binary)
-    local signature
-    signature=$(printf '%s' "$string_to_sign" | openssl dgst -sha256 -hmac "$k_signing" | cut -d' ' -f2)
+    # Sign the string - CORRECTED HMAC CHAIN
+    local k_date k_region k_service k_signing signature
+    
+    # Use a temporary file approach for binary HMAC chain
+    local temp_dir="/tmp/s3_sign_$$"
+    mkdir -p "$temp_dir"
+    
+    # Step 1: kDate = HMAC("AWS4" + kSecret, Date)
+    printf '%s' "$date_stamp" | openssl dgst -sha256 -mac HMAC -macopt "key:AWS4$SECRET_ACCESS_KEY" -binary > "$temp_dir/k_date"
+    
+    # Step 2: kRegion = HMAC(kDate, Region)
+    printf '%s' "$S3_REGION" | openssl dgst -sha256 -mac HMAC -macopt "hexkey:$(xxd -p -c 256 < "$temp_dir/k_date")" -binary > "$temp_dir/k_region"
+    
+    # Step 3: kService = HMAC(kRegion, Service)
+    printf '%s' "$service" | openssl dgst -sha256 -mac HMAC -macopt "hexkey:$(xxd -p -c 256 < "$temp_dir/k_region")" -binary > "$temp_dir/k_service"
+    
+    # Step 4: kSigning = HMAC(kService, "aws4_request")
+    printf '%s' "aws4_request" | openssl dgst -sha256 -mac HMAC -macopt "hexkey:$(xxd -p -c 256 < "$temp_dir/k_service")" -binary > "$temp_dir/k_signing"
+    
+    # Step 5: signature = HMAC(kSigning, stringToSign)
+    signature=$(printf '%s' "$string_to_sign" | openssl dgst -sha256 -mac HMAC -macopt "hexkey:$(xxd -p -c 256 < "$temp_dir/k_signing")" | cut -d' ' -f2)
+    
+    # Cleanup temp files
+    rm -rf "$temp_dir"
     
     # Authorization header
     local authorization_header="$algorithm Credential=$ACCESS_KEY_ID/$credential_scope, SignedHeaders=$signed_headers, Signature=$signature"
