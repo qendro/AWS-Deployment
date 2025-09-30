@@ -252,6 +252,30 @@ restore_manifest() {
     return 0
 }
 
+fix_permissions() {
+    local target_owner target_group
+    if [[ -n "${RESTORE_CHOWN_USER:-}" && -n "${RESTORE_CHOWN_GROUP:-}" ]]; then
+        target_owner="$RESTORE_CHOWN_USER"
+        target_group="$RESTORE_CHOWN_GROUP"
+    else
+        # Derive owner from DXNN_DIR when possible; fall back to ubuntu:ubuntu
+        local stat_output
+        stat_output=$(stat -c '%U:%G' "$DXNN_DIR" 2>/dev/null || echo 'ubuntu:ubuntu')
+        target_owner=${stat_output%%:*}
+        target_group=${stat_output##*:}
+        [[ -z "$target_owner" ]] && target_owner="ubuntu"
+        [[ -z "$target_group" ]] && target_group="$target_owner"
+    fi
+
+    log "INFO" "Fixing permissions for restored artifacts (owner=${target_owner}:${target_group})"
+
+    chown -R "$target_owner":"$target_group" "$DXNN_DIR"/Mnesia.nonode@nohost 2>/dev/null || true
+    chown -R "$target_owner":"$target_group" "$DXNN_DIR"/logs 2>/dev/null || true
+    if [[ -f "$DXNN_DIR/config.erl" ]]; then
+        chown "$target_owner":"$target_group" "$DXNN_DIR/config.erl" 2>/dev/null || true
+    fi
+}
+
 main() {
     log "INFO" "Starting S3 restore to $DXNN_DIR"
     if ! require_aws_cli; then
@@ -265,6 +289,7 @@ main() {
     fi
 
     if restore_manifest; then
+        fix_permissions
         status=0
     else
         status=$?

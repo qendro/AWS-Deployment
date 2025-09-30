@@ -39,6 +39,7 @@ That's it! 🎉
 - **DXNN Training** - Automatically starts neural network training
 - **Spot Monitoring** - Watches for interruptions every 2 seconds
 - **S3 Backup** - Automatic upload of `Mnesia.nonode@nohost/`, `logs/`, and `config.erl` via AWS CLI
+- **Configurable Shutdown** - Toggle `spot_handling.auto_terminate` to control post-finalization poweroff
 - **Auto Restore** - New instances resume from latest S3 checkpoint
 - **SSH Access** - Private key automatically generated
 - **Monitoring** - Production monitoring dashboard included

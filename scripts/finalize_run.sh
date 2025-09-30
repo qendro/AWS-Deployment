@@ -4,6 +4,12 @@
 
 set -euo pipefail
 
+# Optional environment overrides
+if [[ -f /etc/dxnn-env ]]; then
+    # shellcheck disable=SC1091
+    source /etc/dxnn-env
+fi
+
 # Configuration
 AWS_CLI_BIN="${AWS_CLI_BIN:-aws}"
 LOCK_FILE="/var/lock/dxnn.finalize.lock"
@@ -21,6 +27,7 @@ RUN_ID="${RUN_ID:-}"
 # Artifacts to capture from the DXNN workspace
 ARTIFACT_DIRS=("Mnesia.nonode@nohost" "logs")
 ARTIFACT_FILES=("config.erl")
+AUTO_TERMINATE_DEFAULT="${AUTO_TERMINATE_DEFAULT:-true}"
 
 # Optional region handling for AWS CLI
 AWS_REGION_HINT="${AWS_REGION:-${AWS_DEFAULT_REGION:-${S3_REGION:-}}}"
@@ -168,6 +175,31 @@ require_aws_cli() {
 
 aws_s3_cp() {
     "$AWS_CLI_BIN" s3 cp "$@" "${AWS_S3_ARGS[@]}"
+}
+
+resolve_auto_terminate() {
+    local value="${AUTO_TERMINATE:-}";
+    if [[ -z "$value" ]]; then
+        value="$AUTO_TERMINATE_DEFAULT"
+    fi
+
+    value=$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')
+
+    case "$value" in
+        true|1|yes|on)
+            echo "true"
+            ;;
+        false|0|no|off)
+            echo "false"
+            ;;
+        *)
+            if [[ "${SAFE_MODE:-}" == "true" ]]; then
+                echo "false"
+            else
+                echo "true"
+            fi
+            ;;
+    esac
 }
 
 # Retry configuration
@@ -454,25 +486,36 @@ main() {
         log "INFO" "Another finalization process is running - exiting"
         exit 0
     fi
-    
-    # Run finalization
-    local shutdown_reason
 
+    local finalize_status="success"
     if finalize; then
         rm -f "$MANIFEST_FILE"
-        shutdown_reason="TERMINATING - Powering off instance"
+        log "INFO" "FINALIZE_COMPLETE - Artifacts processed (status: $COMPLETION_STATUS)"
     else
         rm -f "$MANIFEST_FILE"
-        shutdown_reason="FINALIZE_FAILED - Powering off instance anyway"
+        finalize_status="failure"
+        log "ERROR" "FINALIZE_FAILED - Encountered errors during finalization"
     fi
 
-    log "INFO" "$shutdown_reason"
+    local auto_terminate
+    auto_terminate=$(resolve_auto_terminate)
+
+    log "INFO" "AUTO_TERMINATE_DEFAULT=$AUTO_TERMINATE_DEFAULT AUTO_TERMINATE_ENV=${AUTO_TERMINATE:-} SAFE_MODE=${SAFE_MODE:-} RESOLVED_AUTO_TERMINATE=$auto_terminate"
 
     if [[ "${SAFE_MODE:-}" == "true" ]]; then
-        log "INFO" "SAFE_MODE enabled - would poweroff here"
+        auto_terminate="false"
+        log "INFO" "SAFE_MODE enabled - skipping poweroff"
+    fi
+
+    if [[ "$auto_terminate" != "true" ]]; then
+        log "INFO" "AUTO_TERMINATE disabled - instance will remain running"
+        if [[ "$finalize_status" == "failure" ]]; then
+            return 1
+        fi
         return 0
     fi
 
+    log "INFO" "AUTO_TERMINATE enabled - powering off instance"
     if ! run_privileged poweroff; then
         log "ERROR" "Poweroff command failed; attempting shutdown fallback"
         run_privileged shutdown -h now || log "ERROR" "Shutdown fallback also failed"

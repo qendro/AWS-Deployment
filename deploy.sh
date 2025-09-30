@@ -279,6 +279,15 @@ upload_scripts() {
             sudo sed -i "s|ERLANG_NODE=\"dxnn@127.0.0.1\"|ERLANG_NODE=\"$ERLANG_NODE\"|g" /usr/local/bin/spot-watch.sh
             sudo sed -i "s|ERLANG_COOKIE_FILE=\"/var/lib/dxnn/.erlang.cookie\"|ERLANG_COOKIE_FILE=\"$ERLANG_COOKIE_FILE\"|g" /usr/local/bin/spot-watch.sh
             sudo sed -i "s/USE_REBALANCE=false/USE_REBALANCE=$USE_REBALANCE/g" /usr/local/bin/spot-watch.sh
+            sudo sed -i "s/AUTO_TERMINATE_DEFAULT=\"true\"/AUTO_TERMINATE_DEFAULT=\"$AUTO_TERMINATE\"/g" /usr/local/bin/spot-watch.sh
+            sudo sed -i "s/AUTO_TERMINATE_DEFAULT:-true/AUTO_TERMINATE_DEFAULT:-$AUTO_TERMINATE/g" /usr/local/bin/dxnn-wrapper.sh
+            sudo sed -i "s/AUTO_TERMINATE_DEFAULT:-true/AUTO_TERMINATE_DEFAULT:-$AUTO_TERMINATE/g" /usr/local/bin/finalize_run.sh
+
+            sudo bash -c "cat <<EOF > /etc/dxnn-env
+AUTO_TERMINATE=$AUTO_TERMINATE
+AUTO_TERMINATE_DEFAULT=$AUTO_TERMINATE
+RESTORE_FROM_S3=$RESTORE_FROM_S3
+EOF"
 
             # Install service files
             sudo cp /tmp/*.service /etc/systemd/system/ 2>/dev/null || true
@@ -423,6 +432,13 @@ generate_user_data() {
         setup_count=$(yq e '.application.setup_commands | length' "$CONFIG_FILE" 2>/dev/null)
         if [[ "$setup_count" =~ ^[1-9][0-9]*$ ]]; then
             echo '#!/bin/bash'
+            if [[ -n "$AUTO_TERMINATE" || -n "$RESTORE_FROM_S3" ]]; then
+                printf "%s\n" "cat <<'DXNN_ENV' > /etc/dxnn-env"
+                printf "%s\n" "AUTO_TERMINATE=${AUTO_TERMINATE:-true}"
+                printf "%s\n" "AUTO_TERMINATE_DEFAULT=${AUTO_TERMINATE:-true}"
+                printf "%s\n" "RESTORE_FROM_S3=${RESTORE_FROM_S3:-true}"
+                printf "%s\n" "DXNN_ENV"
+            fi
             yq e '.application.setup_commands[]' "$CONFIG_FILE" | while read -r cmd; do
                 echo "$cmd"
             done
@@ -537,6 +553,10 @@ load_config() {
         ERLANG_COOKIE_FILE=$(yq e '.spot_handling.erlang_cookie_file' "$config_file")
         RESTORE_FROM_S3=$(yq e '.spot_handling.restore_from_s3_on_boot' "$config_file")
         USE_REBALANCE=$(yq e '.spot_handling.use_rebalance_recommendation' "$config_file")
+        AUTO_TERMINATE=$(yq e '.spot_handling.auto_terminate // "true"' "$config_file")
+
+        [[ -z "$RESTORE_FROM_S3" || "$RESTORE_FROM_S3" == "null" ]] && RESTORE_FROM_S3="true"
+        [[ -z "$AUTO_TERMINATE" || "$AUTO_TERMINATE" == "null" ]] && AUTO_TERMINATE="true"
         
         if [[ -z "$AMI_ID" || "$AMI_ID" == "null" ]]; then
             log_error "AMI ID (aws.ami_id) must be specified in the config file."
@@ -559,7 +579,13 @@ load_config() {
         if [[ "$SPOT_ENABLED" == "true" ]]; then
             log_info "Spot Enabled: $SPOT_ENABLED"
             log_info "S3 Bucket: $S3_BUCKET"
+            log_info "S3 Prefix: $S3_PREFIX"
             log_info "Job ID: $JOB_ID"
+            log_info "Checkpoint Deadline: $CHECKPOINT_DEADLINE"
+            log_info "Poll Interval: $POLL_INTERVAL"
+            log_info "Restore on Boot: $RESTORE_FROM_S3"
+            log_info "Use Rebalance Recommendation: $USE_REBALANCE"
+            log_info "Auto Terminate After Finalize: $AUTO_TERMINATE"
         fi
     else
         log_warning "yq not available, using environment variables or defaults"

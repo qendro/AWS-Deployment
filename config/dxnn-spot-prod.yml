@@ -23,8 +23,9 @@ spot_handling:
   container_name: "dxnn-app"
   erlang_node: "dxnn@127.0.0.1"
   erlang_cookie_file: "/var/lib/dxnn/.erlang.cookie"
-  restore_from_s3_on_boot: true
+  restore_from_s3_on_boot: false        # Whether to restore from S3 on instance start
   use_rebalance_recommendation: false
+  auto_terminate: false                 # Auto terminate after finalize_run.sh completes
 
 application:
   type: "dxnn-spot"
@@ -42,100 +43,114 @@ application:
     - "echo 'net.core.wmem_max=134217728' >> /etc/sysctl.conf"
     - "sysctl -p"
     - |
-      cat > /etc/logrotate.d/spot-watch << 'EOF'
-      /var/log/spot-watch.log {
-          daily
-          rotate 7
-          compress
-          delaycompress
-          missingok
-          notifempty
-          create 644 root root
-      }
-      EOF
+        cat > /etc/logrotate.d/spot-watch << 'EOF'
+        /var/log/spot-watch.log {
+            daily
+            rotate 7
+            compress
+            delaycompress
+            missingok
+            notifempty
+            create 644 root root
+        }
+        EOF
     - |
-      set -e
-      cd /home/ubuntu
-      git clone https://github.com/qendro/DXNN-Trader-v2.git dxnn-trader
-      chown -R ubuntu:ubuntu /home/ubuntu/dxnn-trader
-      echo "dxnn_prod_$(openssl rand -hex 16)" > /var/lib/dxnn/.erlang.cookie
-      chown ubuntu:ubuntu /var/lib/dxnn/.erlang.cookie
-      chmod 600 /var/lib/dxnn/.erlang.cookie
-      if [[ -f /tmp/finalize_run.sh ]]; then
-        cp /tmp/finalize_run.sh /usr/local/bin/finalize_run.sh
-      fi
-      if [[ -f /tmp/dxnn-wrapper.sh ]]; then
-        cp /tmp/dxnn-wrapper.sh /usr/local/bin/dxnn-wrapper.sh
-      fi
-      if [[ -f /tmp/restore-from-s3.sh ]]; then
-        cp /tmp/restore-from-s3.sh /usr/local/bin/restore-from-s3.sh
-      fi
-
+        set -e
+        cd /home/ubuntu
+        git clone https://github.com/qendro/DXNN-Trader-v2.git dxnn-trader
+        chown -R ubuntu:ubuntu /home/ubuntu/dxnn-trader
+        echo "dxnn_prod_$(openssl rand -hex 16)" > /var/lib/dxnn/.erlang.cookie
+        chown ubuntu:ubuntu /var/lib/dxnn/.erlang.cookie
+        chmod 600 /var/lib/dxnn/.erlang.cookie
+        if [[ -f /tmp/finalize_run.sh ]]; then
+          cp /tmp/finalize_run.sh /usr/local/bin/finalize_run.sh
+        fi
+        if [[ -f /tmp/dxnn-wrapper.sh ]]; then
+          cp /tmp/dxnn-wrapper.sh /usr/local/bin/dxnn-wrapper.sh
+        fi
+        if [[ -f /tmp/restore-from-s3.sh ]]; then
+          cp /tmp/restore-from-s3.sh /usr/local/bin/restore-from-s3.sh
+        fi
     - "chmod +x /usr/local/bin/finalize_run.sh /usr/local/bin/dxnn-wrapper.sh /usr/local/bin/restore-from-s3.sh 2>/dev/null || true"
     - |
-      set -e
-      tmpdir=$(mktemp -d)
-      arch=$(uname -m)
-      if [[ "$arch" == "x86_64" || "$arch" == "amd64" ]]; then
-        cli_url="https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip"
-      else
-        cli_url="https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip"
-      fi
-      curl -Ls "$cli_url" -o "$tmpdir/awscliv2.zip"
-      unzip -q "$tmpdir/awscliv2.zip" -d "$tmpdir"
-      "$tmpdir/aws/install" --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli --update
-      rm -rf "$tmpdir"
-    - |
-      touch /var/log/dxnn-run.log
-      chown ubuntu:ubuntu /var/log/dxnn-run.log
-      chmod 644 /var/log/dxnn-run.log
-
-      # Wait for /home/ubuntu/SCRIPTS_READY trigger file (created after SCP upload)
-      for attempt in {1..60}; do
-        if [[ -f /home/ubuntu/SCRIPTS_READY ]]; then
-          echo "SCRIPTS_READY file detected, proceeding with autostart" >> /var/log/dxnn-setup.log
-          break
-        fi
-        echo "waiting for SCRIPTS_READY (attempt $attempt)" >> /var/log/dxnn-setup.log
-        sleep 5
-      done
-
-      if [[ -f /home/ubuntu/SCRIPTS_READY ]]; then
-        if [[ -x /usr/local/bin/restore-from-s3.sh ]]; then
-          RESTORE_S3_BUCKET="dxnn-checkpoints" \
-          RESTORE_S3_PREFIX="dxnn-prod" \
-          RESTORE_JOB_ID="dxnn-prod-training-001" \
-          RESTORE_DXNN_DIR="/home/ubuntu/dxnn-trader" \
-          /usr/local/bin/restore-from-s3.sh >> /var/log/dxnn-restore.log 2>&1 || echo "restore-from-s3 failed" >> /var/log/dxnn-setup.log
+        set -e
+        tmpdir=$(mktemp -d)
+        arch=$(uname -m)
+        if [[ "$arch" == "x86_64" || "$arch" == "amd64" ]]; then
+          cli_url="https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip"
         else
-          echo "restore-from-s3.sh not present" >> /var/log/dxnn-setup.log
+          cli_url="https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip"
         fi
-
-        su - ubuntu -c '
-          export S3_BUCKET="dxnn-checkpoints"
-          export S3_PREFIX="dxnn-prod"
-          export JOB_ID="dxnn-prod-training-001"
-          export RUN_ID="$(date -u +%Y%m%d-%H%M%SZ)"
-          /usr/local/bin/dxnn-wrapper.sh
-        '
-      else
-        echo "SCRIPTS_READY not detected after wait; skipping autostart" >> /var/log/dxnn-setup.log
-      fi
-    
-    # Health check endpoint (simple HTTP server for monitoring)
+        curl -Ls "$cli_url" -o "$tmpdir/awscliv2.zip"
+        unzip -q "$tmpdir/awscliv2.zip" -d "$tmpdir"
+        "$tmpdir/aws/install" --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli --update
+        rm -rf "$tmpdir"
     - |
-      cat > /usr/local/bin/health-check.sh << 'HEALTH_EOF'
-      #!/bin/bash
-      # Simple health check for DXNN application
-      if tmux has-session -t trader 2>/dev/null; then
-          echo "OK: DXNN trader session active"
-          exit 0
-      else
-          echo "ERROR: DXNN trader session not found"
-          exit 1
-      fi
-      HEALTH_EOF
-      chmod +x /usr/local/bin/health-check.sh
+        touch /var/log/dxnn-run.log
+        chown ubuntu:ubuntu /var/log/dxnn-run.log
+        chmod 644 /var/log/dxnn-run.log
+
+        # Wait for /home/ubuntu/SCRIPTS_READY trigger file (created after SCP upload)
+        for attempt in {1..60}; do
+          if [[ -f /home/ubuntu/SCRIPTS_READY ]]; then
+            echo "SCRIPTS_READY file detected, proceeding with autostart" >> /var/log/dxnn-setup.log
+            break
+          fi
+          echo "waiting for SCRIPTS_READY (attempt $attempt)" >> /var/log/dxnn-setup.log
+          sleep 5
+        done
+
+        if [[ -f /home/ubuntu/SCRIPTS_READY ]]; then
+          if [[ -f /etc/dxnn-env ]]; then
+            # shellcheck disable=SC1091
+            source /etc/dxnn-env
+          fi
+
+          if [[ "${RESTORE_FROM_S3:-true}" == "true" ]]; then
+            if [[ -x /usr/local/bin/restore-from-s3.sh ]]; then
+              RESTORE_S3_BUCKET="dxnn-checkpoints" \
+              RESTORE_S3_PREFIX="dxnn-prod" \
+              RESTORE_JOB_ID="dxnn-prod-training-001" \
+              RESTORE_DXNN_DIR="/home/ubuntu/dxnn-trader" \
+              RESTORE_CHOWN_USER="ubuntu" \
+              RESTORE_CHOWN_GROUP="ubuntu" \
+              /usr/local/bin/restore-from-s3.sh >> /var/log/dxnn-restore.log 2>&1 || echo "restore-from-s3 failed" >> /var/log/dxnn-setup.log
+            else
+              echo "restore-from-s3.sh not present" >> /var/log/dxnn-setup.log
+            fi
+          else
+            echo "restore-from-s3 disabled via configuration" >> /var/log/dxnn-setup.log
+          fi
+
+          su - ubuntu -c '
+            if [[ -f /etc/dxnn-env ]]; then
+              # shellcheck disable=SC1091
+              source /etc/dxnn-env
+            fi
+            export S3_BUCKET="dxnn-checkpoints"
+            export S3_PREFIX="dxnn-prod"
+            export JOB_ID="dxnn-prod-training-001"
+            export RUN_ID="$(date -u +%Y%m%d-%H%M%SZ)"
+            export AUTO_TERMINATE="${AUTO_TERMINATE:-${AUTO_TERMINATE_DEFAULT:-true}}"
+            /usr/local/bin/dxnn-wrapper.sh
+          '
+        else
+          echo "SCRIPTS_READY not detected after wait; skipping autostart" >> /var/log/dxnn-setup.log
+        fi
+    - |
+        cat > /usr/local/bin/health-check.sh << 'HEALTH_EOF'
+        #!/bin/bash
+        # Simple health check for DXNN application
+        if tmux has-session -t trader 2>/dev/null; then
+            echo "OK: DXNN trader session active"
+            exit 0
+        else
+            echo "ERROR: DXNN trader session not found"
+            exit 1
+        fi
+        HEALTH_EOF
+        chmod +x /usr/local/bin/health-check.sh
+    - "touch /home/ubuntu/SCRIPTS_READY"
 
 networking:
   ports:

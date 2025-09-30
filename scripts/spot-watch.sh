@@ -1,6 +1,12 @@
 #!/bin/bash
 set -euo pipefail
 
+# Optional environment overrides
+if [[ -f /etc/dxnn-env ]]; then
+    # shellcheck disable=SC1091
+    source /etc/dxnn-env
+fi
+
 # Configuration (templated from config)
 CHECKPOINT_DEADLINE=60  # From IMDS detection
 POLL_INTERVAL=2
@@ -14,6 +20,7 @@ CHECKPOINT_DIR="/var/lib/dxnn/checkpoints"
 LOG_FILE="/var/log/spot-watch.log"
 LOCK_FILE="/run/dxnn_spot_triggered"
 USE_REBALANCE=false
+AUTO_TERMINATE_DEFAULT="true"
 
 # IMDSv2
 IMDS="http://169.254.169.254"
@@ -142,6 +149,8 @@ main() {
     export S3_PREFIX="$S3_PREFIX"
     export JOB_ID="$JOB_ID"
     export RUN_ID="${RUN_ID:-$(date -u +%Y%m%d-%H%M%SZ)}"
+    export AUTO_TERMINATE="${AUTO_TERMINATE:-$AUTO_TERMINATE_DEFAULT}"
+    export AUTO_TERMINATE_DEFAULT
     
     # Call finalizer script (handles upload and termination)
     if [[ -x "/usr/local/bin/finalize_run.sh" ]]; then
