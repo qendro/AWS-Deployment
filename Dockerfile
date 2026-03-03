@@ -29,9 +29,11 @@ WORKDIR /aws-deployment
 
 # Copy deployment files
 COPY deploy.sh ./
+COPY ami-manager.sh ./
+COPY deploy-config.sh ./
 COPY scripts/ ./scripts/
 COPY config/ ./config/
-RUN chmod +x deploy.sh && find scripts/ -name "*.sh" -exec chmod +x {} \;
+RUN chmod +x deploy.sh ami-manager.sh deploy-config.sh && find scripts/ -name "*.sh" -exec chmod +x {} \;
 
 # Set default entrypoint
 ENTRYPOINT ["./deploy.sh"]
