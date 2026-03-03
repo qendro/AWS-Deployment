@@ -194,6 +194,12 @@ if [[ -n "$GIT_BRANCH" ]]; then
 set -e
 cd /home/ubuntu/dxnn-trader
 
+# Stash any local changes (especially config.erl)
+if ! git diff-index --quiet HEAD --; then
+    echo "Stashing local changes..."
+    git stash push -m "Auto-stash before deploy-config.sh pull at \$(date)"
+fi
+
 # Fetch latest
 git fetch origin
 
