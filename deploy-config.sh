@@ -86,6 +86,9 @@ if [[ ! -f "$SSH_KEY" ]]; then
     exit 1
 fi
 
+# Ensure correct permissions on SSH key
+chmod 600 "$SSH_KEY" 2>/dev/null || true
+
 if [[ -n "$CONFIG_FILE" && ! -f "$CONFIG_FILE" ]]; then
     log_error "Config file not found: $CONFIG_FILE"
     exit 1
@@ -112,13 +115,37 @@ scp_upload() {
         "$src" "${SSH_USER}@${HOST}:${dst}"
 }
 
-# Check SSH connectivity
+# Check SSH connectivity with retries
 log_info "Testing SSH connection to $HOST..."
-if ! ssh_exec "echo 'SSH OK'" >/dev/null 2>&1; then
-    log_error "Cannot connect to $HOST"
-    exit 1
-fi
-log_success "SSH connection established"
+log_info "Using key: $SSH_KEY"
+log_info "User: $SSH_USER"
+
+MAX_RETRIES=5
+RETRY_COUNT=0
+RETRY_DELAY=5
+
+while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+    if ssh_exec "echo 'SSH OK'" 2>&1; then
+        log_success "SSH connection established"
+        break
+    else
+        RETRY_COUNT=$((RETRY_COUNT + 1))
+        if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+            log_warning "SSH connection failed (attempt $RETRY_COUNT/$MAX_RETRIES), retrying in ${RETRY_DELAY}s..."
+            sleep $RETRY_DELAY
+            RETRY_DELAY=$((RETRY_DELAY * 2))  # Exponential backoff
+        else
+            log_error "Cannot connect to $HOST after $MAX_RETRIES attempts"
+            log_error "Troubleshooting:"
+            log_error "  1. Check if instance is running and ready"
+            log_error "  2. Check security group allows SSH (port 22) from 0.0.0.0/0"
+            log_error "  3. Verify key file: ls -la $SSH_KEY"
+            log_error "  4. Wait a few minutes for instance to fully boot"
+            log_error "  5. Test manually: ssh -i $SSH_KEY ${SSH_USER}@${HOST}"
+            exit 1
+        fi
+    fi
+done
 
 # Upload config.erl if provided
 if [[ -n "$CONFIG_FILE" ]]; then

@@ -759,3 +759,277 @@ Market: spot | Max Price: $0.38
 Job: dxnn-prod-training-001
 App: dxnn-spot
 Repo: https://github.com/qendro/AWS-Deployment.git | main
+
+═══════════════════════════════════════════════════════════════════
+2026-03-03T13:24:55Z | run-id=20260303-132455Z
+═══════════════════════════════════════════════════════════════════
+
+ssh -i ./output/aws-deployment-key-20260303-132407-key.pem ubuntu@13.218.157.61
+Instance: i-02607bca931843600 | c7i.4xlarge
+Market: spot | Max Price: $0.38
+Job: dxnn-prod-training-001
+App: dxnn-spot
+Repo: https://github.com/qendro/AWS-Deployment.git | main
+
+═══════════════════════════════════════════════════════════════════
+2026-03-03T13:34:24Z | run-id=20260303-133424Z
+═══════════════════════════════════════════════════════════════════
+
+ssh -i ./output/aws-deployment-key-20260303-133357-key.pem ubuntu@184.73.62.14
+Instance: i-0a8ddd64e0878d9ea | c7i.4xlarge
+Market: spot | Max Price: $0.38
+Job: dxnn-prod-training-001
+App: dxnn-spot
+Repo: https://github.com/qendro/AWS-Deployment.git | main
+
+═══════════════════════════════════════════════════════════════════
+2026-03-03T13:45:30Z | run-id=20260303-134530Z
+═══════════════════════════════════════════════════════════════════
+
+ssh -i ./output/aws-deployment-key-20260303-134503-key.pem ubuntu@52.70.20.167
+Instance: i-08b17a84f419fcca7 | c7i.4xlarge
+Market: spot | Max Price: $0.38
+Job: dxnn-prod-training-001
+App: dxnn-spot
+Repo: https://github.com/qendro/AWS-Deployment.git | main
+
+
+═══════════════════════════════════════════════════════════════════
+2026-03-03 | BUG FIX: Config Deployment Module Name Mismatch
+═══════════════════════════════════════════════════════════════════
+
+ISSUE:
+When deploying config.erl via the DXNN Dashboard EC2 Instances interface,
+the deployment failed with the following error:
+
+  [ERROR] Config file has syntax errors
+  /tmp/uploaded_config.beam: Module name 'config' does not match file name 'uploaded_config'
+
+ROOT CAUSE:
+The Phoenix LiveView code in aws_deployment_live.ex was saving the uploaded
+config file as "uploaded_config.erl" instead of "config.erl". When the
+deploy-config.sh script attempted to validate the file using erlc, the Erlang
+compiler detected a mismatch between:
+  - Module name in file: -module(config).
+  - Filename: uploaded_config.erl
+
+Erlang requires the module name to match the filename (without .erl extension).
+
+FIX APPLIED:
+Changed line 318 in DXNN-Dashboard/dxnn_analyzer_web/lib/dxnn_analyzer_web/live/aws_deployment_live.ex
+
+BEFORE:
+  dest = Path.join([System.tmp_dir!(), "uploaded_config.erl"])
+
+AFTER:
+  dest = Path.join([System.tmp_dir!(), "config.erl"])
+
+IMPACT:
+- Config deployment via dashboard now works correctly
+- Local validation passes before uploading to EC2 instance
+- Remote compilation succeeds on the instance
+
+TESTING:
+To test the fix:
+1. Rebuild the Docker container: docker-compose build
+2. Restart the dashboard: docker-compose up -d
+3. Navigate to AWS Deployment page
+4. Upload a config.erl file
+5. Deploy to a running instance
+6. Verify deployment succeeds without module name mismatch error
+
+FILES MODIFIED:
+- DXNN-Dashboard/dxnn_analyzer_web/lib/dxnn_analyzer_web/live/aws_deployment_live.ex
+
+═══════════════════════════════════════════════════════════════════
+
+
+═══════════════════════════════════════════════════════════════════
+2026-03-03 | FEATURE: Deployment Status Tracking & Quick Commands
+═══════════════════════════════════════════════════════════════════
+
+ENHANCEMENT:
+Added deployment status tracking and helpful SSH commands to the EC2 
+Instances dashboard. When you deploy a config to an instance, the system
+now tracks and displays:
+
+1. Deployment Status Badge
+   - Green checkmark (✅) indicates config has been deployed
+   - Shows deployed branch name
+   - Shows deployment timestamp
+   - Shows if training was auto-started
+
+2. Quick Access Commands
+   - SSH connection command (always visible)
+   - tmux attach command (shown after deployment)
+   - tail logs command (shown after deployment)
+   - All commands are copy-paste ready
+
+IMPLEMENTATION:
+- Added deployments tracking to AWSDeploymentServer GenServer state
+- Records deployment metadata when config deployment completes successfully
+- Persists deployment info by instance_id
+- Updates UI in real-time via Phoenix PubSub
+
+DEPLOYMENT INFO TRACKED:
+- key_file: SSH key used for deployment
+- host: Instance IP address
+- branch: Git branch deployed
+- started: Whether DXNN training was auto-started
+- deployed_at: Timestamp of deployment
+
+UI CHANGES:
+- Instance details dropdown now shows deployment status section
+- Green highlighted box when config is deployed
+- Helpful commands section expands after deployment
+- Commands use correct key file path from deployment metadata
+
+USAGE:
+1. Deploy config to an instance via "🚀 Deploy" button
+2. Wait for deployment to complete successfully
+3. Click instance ID (▶) to expand details
+4. See deployment status and quick commands
+5. Copy-paste commands directly into terminal
+
+BENEFITS:
+- No need to remember which instances have been configured
+- Quick access to common SSH commands
+- Correct key file automatically shown
+- Branch tracking helps manage multiple experiments
+- Training status visibility
+
+FILES MODIFIED:
+- DXNN-Dashboard/dxnn_analyzer_web/lib/dxnn_analyzer_web/aws/aws_deployment_server.ex
+  - Added deployments map to state
+  - Added record_deployment/2 function
+  - Added get_deployment/1 function
+  - Added deployment_recorded PubSub broadcast
+
+- DXNN-Dashboard/dxnn_analyzer_web/lib/dxnn_analyzer_web/live/aws_deployment_live.ex
+  - Added deployments assign to socket
+  - Updated handle_info for script_complete to record deployments
+  - Added deployment_recorded message handler
+  - Enhanced instance details UI with deployment status
+  - Added format_datetime/1 helper function
+  - Updated load_state to include deployments
+
+TESTING:
+1. Rebuild: docker-compose build
+2. Restart: docker-compose up -d
+3. Deploy config to an instance
+4. Expand instance details
+5. Verify deployment status badge appears
+6. Verify quick commands are shown
+7. Test commands work correctly
+
+═══════════════════════════════════════════════════════════════════
+
+═══════════════════════════════════════════════════════════════════
+2026-03-03T14:00:19Z | run-id=20260303-140019Z
+═══════════════════════════════════════════════════════════════════
+
+ssh -i ./output/aws-deployment-key-20260303-135953-key.pem ubuntu@100.30.195.118
+Instance: i-0176cc3fa0dc3f46a | c7i.4xlarge
+Market: spot | Max Price: $0.38
+Job: dxnn-prod-training-001
+App: dxnn-spot
+Repo: https://github.com/qendro/AWS-Deployment.git | main
+
+═══════════════════════════════════════════════════════════════════
+2026-03-03T14:05:16Z | run-id=20260303-140516Z
+═══════════════════════════════════════════════════════════════════
+
+ssh -i ./output/aws-deployment-key-20260303-140450-key.pem ubuntu@18.208.252.221
+Instance: i-07d7b8840de0801e6 | c7i.4xlarge
+Market: spot | Max Price: $0.38
+Job: dxnn-prod-training-001
+App: dxnn-spot
+Repo: https://github.com/qendro/AWS-Deployment.git | main
+
+═══════════════════════════════════════════════════════════════════
+2026-03-03T14:08:05Z | run-id=20260303-140805Z
+═══════════════════════════════════════════════════════════════════
+
+ssh -i ./output/aws-deployment-key-20260303-140738-key.pem ubuntu@98.87.169.157
+Instance: i-0691adf4f54d68754 | c7i.4xlarge
+Market: spot | Max Price: $0.38
+Job: dxnn-prod-training-001
+App: dxnn-spot
+Repo: https://github.com/qendro/AWS-Deployment.git | main
+
+═══════════════════════════════════════════════════════════════════
+2026-03-03T14:13:05Z | run-id=20260303-141305Z
+═══════════════════════════════════════════════════════════════════
+
+ssh -i ./output/aws-deployment-key-20260303-141213-key.pem ubuntu@54.242.157.225
+Instance: i-020b21c6063af0367 | t2.micro
+Market: spot | Max Price: $0.38
+Job: dxnn-prod-training-001
+App: dxnn-spot
+Repo: https://github.com/qendro/AWS-Deployment.git | main
+
+═══════════════════════════════════════════════════════════════════
+2026-03-03T14:16:00Z | run-id=20260303-141600Z
+═══════════════════════════════════════════════════════════════════
+
+ssh -i ./output/aws-deployment-key-20260303-141523-key.pem ubuntu@3.90.40.97
+Instance: i-04362f6ee722588d3 | t2.micro
+Market: spot | Max Price: $0.38
+Job: dxnn-prod-training-001
+App: dxnn-spot
+Repo: https://github.com/qendro/AWS-Deployment.git | main
+
+═══════════════════════════════════════════════════════════════════
+2026-03-03T14:42:52Z | run-id=20260303-144252Z
+═══════════════════════════════════════════════════════════════════
+
+ssh -i ./output/aws-deployment-key-20260303-144158-key.pem ubuntu@54.209.250.206
+Instance: i-0eca3dee6d454b264 | t2.micro
+Market: spot | Max Price: $0.38
+Job: dxnn-prod-training-001
+App: dxnn-spot
+Repo: https://github.com/qendro/AWS-Deployment.git | main
+
+═══════════════════════════════════════════════════════════════════
+2026-03-03T14:52:28Z | run-id=20260303-145228Z
+═══════════════════════════════════════════════════════════════════
+
+ssh -i ./output/aws-deployment-key-20260303-145132-key.pem ubuntu@13.220.236.17
+Instance: i-051600e4643c2bbc7 | t2.micro
+Market: spot | Max Price: $0.38
+Job: dxnn-prod-training-001
+App: dxnn-spot
+Repo: https://github.com/qendro/AWS-Deployment.git | main
+
+═══════════════════════════════════════════════════════════════════
+2026-03-03T15:28:42Z | run-id=20260303-152842Z
+═══════════════════════════════════════════════════════════════════
+
+ssh -i ./output/aws-deployment-key-20260303-152804-key.pem ubuntu@100.31.69.181
+Instance: i-0f124574f52371fda | t2.micro
+Market: spot | Max Price: $0.38
+Job: dxnn-prod-training-001
+App: dxnn-spot
+Repo: https://github.com/qendro/AWS-Deployment.git | main
+
+═══════════════════════════════════════════════════════════════════
+2026-03-03T15:34:13Z | run-id=20260303-153413Z
+═══════════════════════════════════════════════════════════════════
+
+ssh -i ./output/aws-deployment-key-20260303-153330-key.pem ubuntu@3.86.66.231
+Instance: i-07895edc59335fa4f | t2.micro
+Market: spot | Max Price: $0.38
+Job: dxnn-prod-training-001
+App: dxnn-spot
+Repo: https://github.com/qendro/AWS-Deployment.git | main
+
+═══════════════════════════════════════════════════════════════════
+2026-03-03T15:48:39Z | run-id=20260303-154839Z
+═══════════════════════════════════════════════════════════════════
+
+ssh -i ./output/aws-deployment-key-20260303-154744-key.pem ubuntu@54.145.145.123
+Instance: i-084e64940d37752dd | t2.micro
+Market: spot | Max Price: $0.38
+Job: dxnn-prod-training-001
+App: dxnn-spot
+Repo: https://github.com/qendro/AWS-Deployment.git | main

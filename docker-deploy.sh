@@ -79,16 +79,33 @@ if [ ! -f ".env" ]; then
 fi
 
 # Prepare docker run arguments
-docker_run_args=(
-    run --rm -it
-    -v "$(pwd):/aws-deployment"
+# Detect if we have a TTY and adjust flags accordingly
+if [ -t 0 ]; then
+    # Interactive mode (TTY available)
+    docker_run_args=(run --rm -it)
+else
+    # Non-interactive mode (no TTY, called from Phoenix/automation)
+    docker_run_args=(run --rm)
+fi
+
+# Use host path if running inside container, otherwise use current directory
+MOUNT_PATH="${HOST_AWS_DEPLOYMENT_PATH:-$(pwd)}"
+
+docker_run_args+=(
+    -v "${MOUNT_PATH}:/aws-deployment"
     --env-file .env
 )
 
 # Shell mode
 if $SHELL_MODE; then
     info "Opening interactive shell in AWS-Deployment container..."
-    docker "${docker_run_args[@]}" aws-deployment:latest /bin/bash
+    # Force interactive mode for shell
+    # Use host path if running inside container, otherwise use current directory
+    MOUNT_PATH="${HOST_AWS_DEPLOYMENT_PATH:-$(pwd)}"
+    docker run --rm -it \
+        -v "${MOUNT_PATH}:/aws-deployment" \
+        --env-file .env \
+        aws-deployment:latest /bin/bash
     exit $?
 fi
 
