@@ -9,7 +9,7 @@ aws:
   spot_max_price: "0.38"
   region: "us-east-1"
   availability_zone: "us-east-1a"
-  ami_id: "ami-REPLACE-WITH-YOUR-AMI"  # Update with your custom AMI ID
+  ami_id: "ami-0c2cdf6900fe482e8"  # Custom DXNN AMI created 2026-03-03
   ssh_user: "ubuntu"
   iam_instance_profile: "DXNN-Spot-Profile"
 
