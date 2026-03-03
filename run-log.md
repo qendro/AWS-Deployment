@@ -748,3 +748,14 @@ Market: spot | Max Price: $0.38
 Job: dxnn-prod-training-001
 App: dxnn-spot
 Repo: https://github.com/qendro/AWS-Deployment.git | main
+
+═══════════════════════════════════════════════════════════════════
+2026-03-03T02:24:45Z | run-id=20260303-022445Z
+═══════════════════════════════════════════════════════════════════
+
+ssh -i ./output/aws-deployment-key-20260303-022358-key.pem ubuntu@34.229.238.19
+Instance: i-031a2b57117290a24 | c7i.4xlarge
+Market: spot | Max Price: $0.38
+Job: dxnn-prod-training-001
+App: dxnn-spot
+Repo: https://github.com/qendro/AWS-Deployment.git | main
