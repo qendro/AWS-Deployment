@@ -84,9 +84,27 @@ log_runner() {
 log_runner "TMUX_SESSION_START - Starting DXNN training"
 cd "$DXNN_DIR"
 
-erl -noshell -eval "
-        make:all()
-    "
+# Get Erlang cookie for distributed access
+ERLANG_COOKIE=""
+if [[ -f "/var/lib/dxnn/.erlang.cookie" ]]; then
+    ERLANG_COOKIE=$(cat /var/lib/dxnn/.erlang.cookie)
+fi
+
+# Get hostname for node name
+HOSTNAME=$(hostname -f 2>/dev/null || hostname)
+
+# Start with distributed Erlang enabled for remote shell access
+# Use -name for fully qualified names, -setcookie for authentication
+if [[ -n "$ERLANG_COOKIE" ]]; then
+    log_runner "Starting with distributed Erlang: dxnn@$HOSTNAME"
+    erl -name "dxnn@$HOSTNAME" \
+        -setcookie "$ERLANG_COOKIE" \
+        -eval "make:all()"
+else
+    log_runner "Starting without distributed Erlang (no cookie found)"
+    erl -noshell -eval "make:all()"
+fi
+
 exit_code=$?
 log_runner "TMUX_SESSION_END - DXNN exited with code $exit_code"
 echo "$exit_code" > "$SESSION_EXIT_CODE_FILE"

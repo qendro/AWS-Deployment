@@ -1,0 +1,77 @@
+metadata:
+  name: "DXNN Spot Instance - AMI-Based"
+  description: "Minimal user-data deployment using custom AMI"
+  version: "2.0"
+
+aws:
+  instance_type: "c7i.4xlarge"
+  market_type: "spot"
+  spot_max_price: "0.38"
+  region: "us-east-1"
+  availability_zone: "us-east-1a"
+  ami_id: "ami-REPLACE-WITH-YOUR-AMI"  # Update with your custom AMI ID
+  ssh_user: "ubuntu"
+  iam_instance_profile: "DXNN-Spot-Profile"
+
+spot_handling:
+  enabled: true
+  checkpoint_deadline_seconds: 60
+  poll_interval_seconds: 4
+  s3_bucket: "dxnn-checkpoints"
+  s3_prefix: "dxnn-prod"
+  job_id: "dxnn-prod-training-001"
+  container_name: "dxnn-app"
+  erlang_node: "dxnn@127.0.0.1"
+  erlang_cookie_file: "/var/lib/dxnn/.erlang.cookie"
+  restore_from_s3_on_boot: false
+  use_rebalance_recommendation: false
+  auto_terminate: false
+
+application:
+  type: "dxnn-spot"
+  setup_commands:
+    # Copy base DXNN-Trader from AMI
+    - "cp -r /opt/dxnn-trader-base /home/ubuntu/dxnn-trader"
+    - "chown -R ubuntu:ubuntu /home/ubuntu/dxnn-trader"
+    
+    # Generate unique Erlang cookie for this instance
+    - "echo 'dxnn_prod_$(openssl rand -hex 16)' > /var/lib/dxnn/.erlang.cookie"
+    - "chown ubuntu:ubuntu /var/lib/dxnn/.erlang.cookie"
+    - "chmod 600 /var/lib/dxnn/.erlang.cookie"
+    
+    # Enable and start spot watcher
+    - "systemctl enable spot-watch"
+    - "systemctl start spot-watch"
+    
+    # Signal ready for config deployment
+    - "touch /home/ubuntu/READY_FOR_CONFIG"
+    
+    # Optional: Auto-start if no config deployment expected
+    # Uncomment the following lines to auto-start with default config
+    # - |
+    #     sudo -u ubuntu bash -c '
+    #     export RUN_ID=$(date -u +%Y%m%d-%H%M%SZ)
+    #     /usr/local/bin/dxnn-wrapper.sh
+    #     '
+
+networking:
+  ports:
+    - 22    # SSH
+    - 4369  # Erlang Port Mapper Daemon (for remote shell)
+    - 9000-9100  # Erlang distribution ports (for remote shell)
+
+tags:
+  Project: "DXNN-Spot"
+  Environment: "Production"
+  JobId: "dxnn-prod-training-001"
+  Owner: "DXNN-Team"
+  DeploymentType: "AMI-Based"
+
+monitoring:
+  enabled: true
+  metrics:
+    - "spot_interruptions"
+    - "checkpoint_frequency"
+    - "s3_upload_success_rate"
+    - "restore_success_rate"
+    - "trading_performance"

@@ -184,7 +184,7 @@ touch /home/ubuntu/READY_FOR_CONFIG
 
 ## Configuration Management
 
-### Option A: Full config.erl Replacement (Recommended)
+###  Full config.erl Replacement (Recommended)
 
 Upload a complete `config.erl` file with all your settings:
 
@@ -192,26 +192,6 @@ Upload a complete `config.erl` file with all your settings:
 scp -i output/key.pem \
     /Users/qendrim/Documents/DXNN_Main/DXNN-Trader-v2/config.erl \
     ubuntu@PUBLIC_IP:/home/ubuntu/dxnn-trader/config.erl
-```
-
-### Option B: Runtime ETS Overrides
-
-Use the built-in ETS override system for quick changes:
-
-```erlang
-% On the instance, in Erlang shell:
-config:set(population_id, experiment_001).
-config:set(fitness_function, curriculum_risk_penalty).
-config:set(evaluations_limit, 50000).
-```
-
-### Option C: Environment Variables
-
-Set configuration via environment variables in user-data:
-
-```bash
-export DXNN_POPULATION_ID="experiment_001"
-export DXNN_FITNESS_FUNCTION="curriculum_risk_penalty"
 ```
 
 ## GitHub Version Control
