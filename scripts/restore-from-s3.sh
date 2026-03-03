@@ -1,12 +1,32 @@
 #!/bin/bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_HELPER="${SCRIPT_DIR}/dxnn-config.sh"
+if [[ -f "$CONFIG_HELPER" ]]; then
+    # shellcheck disable=SC1090
+    # shellcheck source=scripts/dxnn-config.sh
+    source "$CONFIG_HELPER"
+else
+    echo "DXNN configuration helper not found: $CONFIG_HELPER" >&2
+    exit 1
+fi
+
+if [[ -f /etc/dxnn-env ]]; then
+    # shellcheck disable=SC1091
+    source /etc/dxnn-env
+fi
+
+load_dxnn_config
+
 # Restore DXNN artifacts from S3 using the AWS CLI
 
 AWS_CLI_BIN="${AWS_CLI_BIN:-aws}"
-S3_BUCKET="dxnn-checkpoints"
-S3_PREFIX="dxnn"
-JOB_ID="dxnn-training-001"
+dxnn_assign_default S3_BUCKET "${DXNN_CFG_S3_BUCKET:-dxnn-checkpoints}" "dxnn-checkpoints"
+dxnn_assign_default S3_PREFIX "${DXNN_CFG_S3_PREFIX:-dxnn}" "dxnn"
+dxnn_assign_default JOB_ID "${DXNN_CFG_JOB_ID:-dxnn-training-001}" "dxnn-training-001"
+dxnn_assign_default RESTORE_FROM_S3 "${DXNN_CFG_RESTORE_FROM_S3:-false}" "false"
+dxnn_finalize_bool RESTORE_FROM_S3 "${DXNN_CFG_RESTORE_FROM_S3:-false}"
 RUN_ID=""
 DXNN_DIR="/home/ubuntu/dxnn-trader"
 RESTORE_LOG="/var/log/dxnn-restore.log"
@@ -47,6 +67,11 @@ log() {
     shift
     printf '[%s] %s: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$level" "$*" | tee -a "$RESTORE_LOG"
 }
+
+if [[ "$RESTORE_FROM_S3" != "true" ]]; then
+    log "INFO" "Restore disabled via configuration"
+    exit 0
+fi
 
 run_privileged() {
     if [[ $EUID -eq 0 ]]; then

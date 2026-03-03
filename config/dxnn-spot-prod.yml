@@ -4,7 +4,7 @@ metadata:
   version: "1.0"
 
 aws:
-  instance_type: "t2.medium"      # "c7i.4xlarge", "c5.large", "t3.medium", "t2.medium", "m5.large"
+  instance_type: "c7i.4xlarge"     # "c7i.4xlarge", "c5.large", "t3.medium", "t2.medium", "m5.large"
   market_type: "spot"
   spot_max_price: "0.38"
   region: "us-east-1"
@@ -106,11 +106,31 @@ application:
             source /etc/dxnn-env
           fi
 
-          if [[ "${RESTORE_FROM_S3:-true}" == "true" ]]; then
+          CONFIG_HELPER=/usr/local/bin/dxnn-config.sh
+          if [[ -f "$CONFIG_HELPER" ]]; then
+            # shellcheck disable=SC1090
+            source "$CONFIG_HELPER"
+            load_dxnn_config
+          fi
+
+          RESTORE_FROM_S3_VALUE="${RESTORE_FROM_S3:-${DXNN_CFG_RESTORE_FROM_S3:-false}}"
+          if declare -F dxnn_normalize_bool >/dev/null; then
+            RESTORE_FROM_S3_VALUE=$(dxnn_normalize_bool "$RESTORE_FROM_S3_VALUE" "${DXNN_CFG_RESTORE_FROM_S3:-false}")
+          fi
+          RESTORE_FROM_S3_VALUE="${RESTORE_FROM_S3_VALUE,,}"
+          if [[ "$RESTORE_FROM_S3_VALUE" != "true" ]]; then
+            RESTORE_FROM_S3_VALUE="false"
+          fi
+
+          S3_BUCKET_VALUE="${S3_BUCKET:-${DXNN_CFG_S3_BUCKET:-dxnn-checkpoints}}"
+          S3_PREFIX_VALUE="${S3_PREFIX:-${DXNN_CFG_S3_PREFIX:-dxnn}}"
+          JOB_ID_VALUE="${JOB_ID:-${DXNN_CFG_JOB_ID:-dxnn-training-001}}"
+
+          if [[ "$RESTORE_FROM_S3_VALUE" == "true" ]]; then
             if [[ -x /usr/local/bin/restore-from-s3.sh ]]; then
-              RESTORE_S3_BUCKET="dxnn-checkpoints" \
-              RESTORE_S3_PREFIX="dxnn-prod" \
-              RESTORE_JOB_ID="dxnn-prod-training-001" \
+              RESTORE_S3_BUCKET="$S3_BUCKET_VALUE" \
+              RESTORE_S3_PREFIX="$S3_PREFIX_VALUE" \
+              RESTORE_JOB_ID="$JOB_ID_VALUE" \
               RESTORE_DXNN_DIR="/home/ubuntu/dxnn-trader" \
               RESTORE_CHOWN_USER="ubuntu" \
               RESTORE_CHOWN_GROUP="ubuntu" \
@@ -122,18 +142,27 @@ application:
             echo "restore-from-s3 disabled via configuration" >> /var/log/dxnn-setup.log
           fi
 
-          su - ubuntu -c '
-            if [[ -f /etc/dxnn-env ]]; then
-              # shellcheck disable=SC1091
-              source /etc/dxnn-env
-            fi
-            export S3_BUCKET="dxnn-checkpoints"
-            export S3_PREFIX="dxnn-prod"
-            export JOB_ID="dxnn-prod-training-001"
-            export RUN_ID="$(date -u +%Y%m%d-%H%M%SZ)"
-            export AUTO_TERMINATE="${AUTO_TERMINATE:-${AUTO_TERMINATE_DEFAULT:-true}}"
-            /usr/local/bin/dxnn-wrapper.sh
-          '
+          sudo -u ubuntu bash <<'DXNN_WRAPPER'
+          set -euo pipefail
+          if [[ -f /etc/dxnn-env ]]; then
+            # shellcheck disable=SC1091
+            source /etc/dxnn-env
+          fi
+          if [[ -f /usr/local/bin/dxnn-config.sh ]]; then
+            # shellcheck disable=SC1090
+            source /usr/local/bin/dxnn-config.sh
+            load_dxnn_config
+            dxnn_assign_default S3_BUCKET "${DXNN_CFG_S3_BUCKET:-dxnn-checkpoints}" "dxnn-checkpoints"
+            dxnn_assign_default S3_PREFIX "${DXNN_CFG_S3_PREFIX:-dxnn}" "dxnn"
+            dxnn_assign_default JOB_ID "${DXNN_CFG_JOB_ID:-dxnn-training-001}" "dxnn-training-001"
+            dxnn_assign_default AUTO_TERMINATE "${DXNN_CFG_AUTO_TERMINATE:-false}" "false"
+            dxnn_assign_default AUTO_TERMINATE_DEFAULT "${DXNN_CFG_AUTO_TERMINATE:-false}" "false"
+            dxnn_finalize_bool AUTO_TERMINATE "${DXNN_CFG_AUTO_TERMINATE:-false}"
+            dxnn_finalize_bool AUTO_TERMINATE_DEFAULT "${DXNN_CFG_AUTO_TERMINATE:-false}"
+          fi
+          export RUN_ID="${RUN_ID:-$(date -u +%Y%m%d-%H%M%SZ)}"
+          /usr/local/bin/dxnn-wrapper.sh
+          DXNN_WRAPPER
         else
           echo "SCRIPTS_READY not detected after wait; skipping autostart" >> /var/log/dxnn-setup.log
         fi

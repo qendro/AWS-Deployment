@@ -1,26 +1,46 @@
 #!/bin/bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_HELPER="${SCRIPT_DIR}/dxnn-config.sh"
+if [[ -f "$CONFIG_HELPER" ]]; then
+    # shellcheck disable=SC1090
+    # shellcheck source=scripts/dxnn-config.sh
+    source "$CONFIG_HELPER"
+else
+    echo "DXNN configuration helper not found: $CONFIG_HELPER" >&2
+    exit 1
+fi
+
 # Optional environment overrides
 if [[ -f /etc/dxnn-env ]]; then
     # shellcheck disable=SC1091
     source /etc/dxnn-env
 fi
 
-# Configuration (templated from config)
-CHECKPOINT_DEADLINE=60  # From IMDS detection
-POLL_INTERVAL=2
-S3_BUCKET="dxnn-checkpoints"
-S3_PREFIX="dxnn"
-JOB_ID="dxnn-training-001"
-CONTAINER_NAME="dxnn-app"
-ERLANG_NODE="dxnn@127.0.0.1"
-ERLANG_COOKIE_FILE="/var/lib/dxnn/.erlang.cookie"
+load_dxnn_config
+
+dxnn_assign_default CHECKPOINT_DEADLINE "${DXNN_CFG_CHECKPOINT_DEADLINE:-60}" "60"
+dxnn_assign_default POLL_INTERVAL "${DXNN_CFG_POLL_INTERVAL:-4}" "4"
+dxnn_assign_default S3_BUCKET "${DXNN_CFG_S3_BUCKET:-dxnn-checkpoints}" "dxnn-checkpoints"
+dxnn_assign_default S3_PREFIX "${DXNN_CFG_S3_PREFIX:-dxnn}" "dxnn"
+dxnn_assign_default JOB_ID "${DXNN_CFG_JOB_ID:-dxnn-training-001}" "dxnn-training-001"
+dxnn_assign_default CONTAINER_NAME "${DXNN_CFG_CONTAINER_NAME:-dxnn-app}" "dxnn-app"
+dxnn_assign_default ERLANG_NODE "${DXNN_CFG_ERLANG_NODE:-dxnn@127.0.0.1}" "dxnn@127.0.0.1"
+dxnn_assign_default ERLANG_COOKIE_FILE "${DXNN_CFG_ERLANG_COOKIE_FILE:-/var/lib/dxnn/.erlang.cookie}" "/var/lib/dxnn/.erlang.cookie"
+dxnn_assign_default AUTO_TERMINATE_DEFAULT "${DXNN_CFG_AUTO_TERMINATE:-false}" "false"
+dxnn_assign_default AUTO_TERMINATE "${DXNN_CFG_AUTO_TERMINATE:-false}" "false"
+dxnn_assign_default USE_REBALANCE "${DXNN_CFG_USE_REBALANCE:-false}" "false"
+
+dxnn_finalize_int CHECKPOINT_DEADLINE "${DXNN_CFG_CHECKPOINT_DEADLINE:-60}"
+dxnn_finalize_int POLL_INTERVAL "${DXNN_CFG_POLL_INTERVAL:-4}"
+dxnn_finalize_bool AUTO_TERMINATE_DEFAULT "${DXNN_CFG_AUTO_TERMINATE:-false}"
+dxnn_finalize_bool AUTO_TERMINATE "${DXNN_CFG_AUTO_TERMINATE:-false}"
+dxnn_finalize_bool USE_REBALANCE "${DXNN_CFG_USE_REBALANCE:-false}"
+
 CHECKPOINT_DIR="/var/lib/dxnn/checkpoints"
 LOG_FILE="/var/log/spot-watch.log"
 LOCK_FILE="/run/dxnn_spot_triggered"
-USE_REBALANCE=false
-AUTO_TERMINATE_DEFAULT="true"
 
 # IMDSv2
 IMDS="http://169.254.169.254"

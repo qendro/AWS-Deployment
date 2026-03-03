@@ -4,11 +4,24 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_HELPER="${SCRIPT_DIR}/dxnn-config.sh"
+if [[ -f "$CONFIG_HELPER" ]]; then
+    # shellcheck disable=SC1090
+    # shellcheck source=scripts/dxnn-config.sh
+    source "$CONFIG_HELPER"
+else
+    echo "DXNN configuration helper not found: $CONFIG_HELPER" >&2
+    exit 1
+fi
+
 # Optional environment overrides
 if [[ -f /etc/dxnn-env ]]; then
     # shellcheck disable=SC1091
     source /etc/dxnn-env
 fi
+
+load_dxnn_config
 
 # Configuration
 AWS_CLI_BIN="${AWS_CLI_BIN:-aws}"
@@ -19,15 +32,18 @@ EXIT_CODE="${EXIT_CODE:-1}"
 MANIFEST_FILE="/tmp/dxnn_manifest.txt"
 
 # S3 Configuration (from environment or config)
-S3_BUCKET="${S3_BUCKET:-}"
-S3_PREFIX="${S3_PREFIX:-dxnn}"
-JOB_ID="${JOB_ID:-}"
-RUN_ID="${RUN_ID:-}"
+dxnn_assign_default S3_BUCKET "${DXNN_CFG_S3_BUCKET:-dxnn-checkpoints}" "dxnn-checkpoints"
+dxnn_assign_default S3_PREFIX "${DXNN_CFG_S3_PREFIX:-dxnn}" "dxnn"
+dxnn_assign_default JOB_ID "${DXNN_CFG_JOB_ID:-}" ""
+dxnn_assign_default RUN_ID "" ""
 
 # Artifacts to capture from the DXNN workspace
 ARTIFACT_DIRS=("Mnesia.nonode@nohost" "logs")
 ARTIFACT_FILES=("config.erl")
-AUTO_TERMINATE_DEFAULT="${AUTO_TERMINATE_DEFAULT:-true}"
+dxnn_assign_default AUTO_TERMINATE_DEFAULT "${DXNN_CFG_AUTO_TERMINATE:-false}" "false"
+dxnn_assign_default AUTO_TERMINATE "${DXNN_CFG_AUTO_TERMINATE:-false}" "false"
+dxnn_finalize_bool AUTO_TERMINATE_DEFAULT "${DXNN_CFG_AUTO_TERMINATE:-false}"
+dxnn_finalize_bool AUTO_TERMINATE "${DXNN_CFG_AUTO_TERMINATE:-false}"
 
 # Optional region handling for AWS CLI
 AWS_REGION_HINT="${AWS_REGION:-${AWS_DEFAULT_REGION:-${S3_REGION:-}}}"

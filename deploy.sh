@@ -257,37 +257,46 @@ upload_scripts() {
         log_error "Failed to upload scripts"
         return 1
     }
+
+    local config_basename=""
+    local remote_config_path=""
+    if [[ -n "${CONFIG_FILE:-}" && -f "$CONFIG_FILE" ]]; then
+        config_basename="$(basename "$CONFIG_FILE")"
+        remote_config_path="/home/ubuntu/config/$config_basename"
+        scp -i "$ssh_key_path" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$CONFIG_FILE" "$SSH_USER@$public_ip:/tmp/$config_basename" || {
+            log_error "Failed to upload config file"
+            return 1
+        }
+    fi
     
     # Upload service files if they exist
     [[ -f scripts/*.service ]] && scp -i "$ssh_key_path" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null scripts/*.service "$SSH_USER@$public_ip:/tmp/" 2>/dev/null
     
     # Install and configure scripts
     ssh -i "$ssh_key_path" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$SSH_USER@$public_ip" << EOF
+        set -euo pipefail
+
         # Install scripts
         sudo cp /tmp/*.sh /usr/local/bin/ 2>/dev/null || true
         sudo chmod +x /usr/local/bin/*.sh
 
+        if [[ -n "$config_basename" && -f "/tmp/$config_basename" ]]; then
+            sudo mkdir -p /home/ubuntu/config
+            sudo mv "/tmp/$config_basename" "$remote_config_path"
+            sudo chown ubuntu:ubuntu "$remote_config_path"
+            sudo chmod 640 "$remote_config_path"
+        fi
+
         # Configure spot handling if enabled
         if [[ "$SPOT_ENABLED" == "true" ]]; then
-            # Configure spot-watch.sh with deployment-specific values
-            sudo sed -i "s/CHECKPOINT_DEADLINE=60/CHECKPOINT_DEADLINE=$CHECKPOINT_DEADLINE/g" /usr/local/bin/spot-watch.sh
-            sudo sed -i "s/POLL_INTERVAL=2/POLL_INTERVAL=$POLL_INTERVAL/g" /usr/local/bin/spot-watch.sh
-            sudo sed -i "s|S3_BUCKET=\"dxnn-checkpoints\"|S3_BUCKET=\"$S3_BUCKET\"|g" /usr/local/bin/spot-watch.sh
-            sudo sed -i "s|S3_PREFIX=\"dxnn\"|S3_PREFIX=\"$S3_PREFIX\"|g" /usr/local/bin/spot-watch.sh
-            sudo sed -i "s|JOB_ID=\"dxnn-training-001\"|JOB_ID=\"$JOB_ID\"|g" /usr/local/bin/spot-watch.sh
-            sudo sed -i "s|CONTAINER_NAME=\"dxnn-app\"|CONTAINER_NAME=\"$CONTAINER_NAME\"|g" /usr/local/bin/spot-watch.sh
-            sudo sed -i "s|ERLANG_NODE=\"dxnn@127.0.0.1\"|ERLANG_NODE=\"$ERLANG_NODE\"|g" /usr/local/bin/spot-watch.sh
-            sudo sed -i "s|ERLANG_COOKIE_FILE=\"/var/lib/dxnn/.erlang.cookie\"|ERLANG_COOKIE_FILE=\"$ERLANG_COOKIE_FILE\"|g" /usr/local/bin/spot-watch.sh
-            sudo sed -i "s/USE_REBALANCE=false/USE_REBALANCE=$USE_REBALANCE/g" /usr/local/bin/spot-watch.sh
-            sudo sed -i "s/AUTO_TERMINATE_DEFAULT=\"true\"/AUTO_TERMINATE_DEFAULT=\"$AUTO_TERMINATE\"/g" /usr/local/bin/spot-watch.sh
-            sudo sed -i "s/AUTO_TERMINATE_DEFAULT:-true/AUTO_TERMINATE_DEFAULT:-$AUTO_TERMINATE/g" /usr/local/bin/dxnn-wrapper.sh
-            sudo sed -i "s/AUTO_TERMINATE_DEFAULT:-true/AUTO_TERMINATE_DEFAULT:-$AUTO_TERMINATE/g" /usr/local/bin/finalize_run.sh
-
-            sudo bash -c "cat <<EOF > /etc/dxnn-env
+            sudo bash -c "cat <<'DXNN_ENV' > /etc/dxnn-env
 AUTO_TERMINATE=$AUTO_TERMINATE
 AUTO_TERMINATE_DEFAULT=$AUTO_TERMINATE
 RESTORE_FROM_S3=$RESTORE_FROM_S3
-EOF"
+DXNN_ENV"
+            if [[ -n "$remote_config_path" ]]; then
+                sudo bash -c "echo 'DXNN_CONFIG_FILE=$remote_config_path' >> /etc/dxnn-env"
+            fi
 
             # Install service files
             sudo cp /tmp/*.service /etc/systemd/system/ 2>/dev/null || true
@@ -434,9 +443,9 @@ generate_user_data() {
             echo '#!/bin/bash'
             if [[ -n "$AUTO_TERMINATE" || -n "$RESTORE_FROM_S3" ]]; then
                 printf "%s\n" "cat <<'DXNN_ENV' > /etc/dxnn-env"
-                printf "%s\n" "AUTO_TERMINATE=${AUTO_TERMINATE:-true}"
-                printf "%s\n" "AUTO_TERMINATE_DEFAULT=${AUTO_TERMINATE:-true}"
-                printf "%s\n" "RESTORE_FROM_S3=${RESTORE_FROM_S3:-true}"
+                printf "%s\n" "AUTO_TERMINATE=${AUTO_TERMINATE:-false}"
+                printf "%s\n" "AUTO_TERMINATE_DEFAULT=${AUTO_TERMINATE:-false}"
+                printf "%s\n" "RESTORE_FROM_S3=${RESTORE_FROM_S3:-false}"
                 printf "%s\n" "DXNN_ENV"
             fi
             yq e '.application.setup_commands[]' "$CONFIG_FILE" | while read -r cmd; do
@@ -551,12 +560,12 @@ load_config() {
         CONTAINER_NAME=$(yq e '.spot_handling.container_name' "$config_file")
         ERLANG_NODE=$(yq e '.spot_handling.erlang_node' "$config_file")
         ERLANG_COOKIE_FILE=$(yq e '.spot_handling.erlang_cookie_file' "$config_file")
-        RESTORE_FROM_S3=$(yq e '.spot_handling.restore_from_s3_on_boot' "$config_file")
-        USE_REBALANCE=$(yq e '.spot_handling.use_rebalance_recommendation' "$config_file")
-        AUTO_TERMINATE=$(yq e '.spot_handling.auto_terminate // "true"' "$config_file")
+        RESTORE_FROM_S3=$(yq e '.spot_handling.restore_from_s3_on_boot // "false"' "$config_file")
+        USE_REBALANCE=$(yq e '.spot_handling.use_rebalance_recommendation // "false"' "$config_file")
+        AUTO_TERMINATE=$(yq e '.spot_handling.auto_terminate // "false"' "$config_file")
 
-        [[ -z "$RESTORE_FROM_S3" || "$RESTORE_FROM_S3" == "null" ]] && RESTORE_FROM_S3="true"
-        [[ -z "$AUTO_TERMINATE" || "$AUTO_TERMINATE" == "null" ]] && AUTO_TERMINATE="true"
+        [[ -z "$RESTORE_FROM_S3" || "$RESTORE_FROM_S3" == "null" ]] && RESTORE_FROM_S3="false"
+        [[ -z "$AUTO_TERMINATE" || "$AUTO_TERMINATE" == "null" ]] && AUTO_TERMINATE="false"
         
         if [[ -z "$AMI_ID" || "$AMI_ID" == "null" ]]; then
             log_error "AMI ID (aws.ami_id) must be specified in the config file."

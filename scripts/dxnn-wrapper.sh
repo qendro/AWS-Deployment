@@ -6,38 +6,41 @@
 
 set -euo pipefail
 
-
-# --- BEGIN: Parse YAML config and export variables ---
-CONFIG_YML="/home/ubuntu/config/dxnn-spot-prod.yml"
-if [[ -f /aws-deployment/config/dxnn-spot-prod.yml ]]; then
-    CONFIG_YML="/aws-deployment/config/dxnn-spot-prod.yml"
-elif [[ -f /config/dxnn-spot-prod.yml ]]; then
-    CONFIG_YML="/config/dxnn-spot-prod.yml"
-elif [[ -f /home/ubuntu/config/dxnn-spot-prod.yml ]]; then
-    CONFIG_YML="/home/ubuntu/config/dxnn-spot-prod.yml"
-fi
-
-# Use yq to extract config values
-if command -v yq >/dev/null 2>&1 && [[ -f "$CONFIG_YML" ]]; then
-    export AUTO_TERMINATE="$(yq e '.spot_handling.auto_terminate' "$CONFIG_YML" | grep -E 'true|false' || echo true)"
-    export RESTORE_FROM_S3="$(yq e '.spot_handling.restore_from_s3_on_boot' "$CONFIG_YML" | grep -E 'true|false' || echo true)"
-    export S3_BUCKET="$(yq e '.spot_handling.s3_bucket' "$CONFIG_YML" || echo dxnn-checkpoints)"
-    export S3_PREFIX="$(yq e '.spot_handling.s3_prefix' "$CONFIG_YML" || echo dxnn)"
-    export JOB_ID="$(yq e '.spot_handling.job_id' "$CONFIG_YML" || echo dxnn-training-001)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG_HELPER="${SCRIPT_DIR}/dxnn-config.sh"
+if [[ -f "$CONFIG_HELPER" ]]; then
+    # shellcheck disable=SC1090
+    # shellcheck source=scripts/dxnn-config.sh
+    source "$CONFIG_HELPER"
 else
-    # Fallbacks if yq/config missing
-    export AUTO_TERMINATE="${AUTO_TERMINATE:-true}"
-    export RESTORE_FROM_S3="${RESTORE_FROM_S3:-true}"
-    export S3_BUCKET="${S3_BUCKET:-dxnn-checkpoints}"
-    export S3_PREFIX="${S3_PREFIX:-dxnn}"
-    export JOB_ID="${JOB_ID:-dxnn-training-001}"
+    echo "DXNN configuration helper not found: $CONFIG_HELPER" >&2
+    exit 1
 fi
+
 
 # Optional environment overrides (legacy)
 if [[ -f /etc/dxnn-env ]]; then
         # shellcheck disable=SC1091
         source /etc/dxnn-env
 fi
+
+load_dxnn_config
+
+dxnn_assign_default S3_BUCKET "${DXNN_CFG_S3_BUCKET:-dxnn-checkpoints}" "dxnn-checkpoints"
+dxnn_assign_default S3_PREFIX "${DXNN_CFG_S3_PREFIX:-dxnn}" "dxnn"
+dxnn_assign_default JOB_ID "${DXNN_CFG_JOB_ID:-dxnn-training-001}" "dxnn-training-001"
+dxnn_assign_default RESTORE_FROM_S3 "${DXNN_CFG_RESTORE_FROM_S3:-false}" "false"
+dxnn_assign_default AUTO_TERMINATE "${DXNN_CFG_AUTO_TERMINATE:-false}" "false"
+dxnn_assign_default AUTO_TERMINATE_DEFAULT "${DXNN_CFG_AUTO_TERMINATE:-false}" "false"
+
+dxnn_finalize_bool RESTORE_FROM_S3 "${DXNN_CFG_RESTORE_FROM_S3:-false}"
+dxnn_finalize_bool AUTO_TERMINATE "${DXNN_CFG_AUTO_TERMINATE:-false}"
+dxnn_finalize_bool AUTO_TERMINATE_DEFAULT "${DXNN_CFG_AUTO_TERMINATE:-false}"
+
+AUTO_TERMINATE="${AUTO_TERMINATE:-$DXNN_CFG_AUTO_TERMINATE}"
+AUTO_TERMINATE_DEFAULT="$AUTO_TERMINATE"
+
+export S3_BUCKET S3_PREFIX JOB_ID RESTORE_FROM_S3 AUTO_TERMINATE AUTO_TERMINATE_DEFAULT
 
 # Configuration
 LOG_FILE="/var/log/dxnn-run.log"
@@ -47,15 +50,7 @@ TMUX_SESSION="trader"
 SESSION_EXIT_CODE_FILE="/tmp/dxnn_exit_code"
 TMUX_RUNNER_SCRIPT="/tmp/dxnn_tmux_runner.sh"
 
-# Environment variables for finalizer
-export S3_BUCKET="${S3_BUCKET:-dxnn-checkpoints}"
-export S3_PREFIX="${S3_PREFIX:-dxnn}"
-export JOB_ID="${JOB_ID:-dxnn-training-001}"
 export RUN_ID="${RUN_ID:-$(date -u +%Y%m%d-%H%M%SZ)}"
-
-AUTO_TERMINATE_DEFAULT="${AUTO_TERMINATE_DEFAULT:-false}"
-export AUTO_TERMINATE="${AUTO_TERMINATE:-$AUTO_TERMINATE_DEFAULT}"
-export AUTO_TERMINATE_DEFAULT
 
 # Logging function with UTC timestamps
 log() {
@@ -90,8 +85,7 @@ log_runner "TMUX_SESSION_START - Starting DXNN training"
 cd "$DXNN_DIR"
 
 erl -noshell -eval "
-        make:all(),
-        launcher:start()
+        make:all()
     "
 exit_code=$?
 log_runner "TMUX_SESSION_END - DXNN exited with code $exit_code"

@@ -38,8 +38,7 @@ That's it! 🎉
 - **Spot Instance** - c5.2xlarge (dev) or c5.4xlarge (prod) at spot prices
 - **DXNN Training** - Automatically starts neural network training
 - **Spot Monitoring** - Watches for interruptions every 2 seconds
-- **S3 Backup** - Automatic upload of `Mnesia.nonode@nohost/`, `logs/`, and `config.erl` via AWS CLI
-- **Configurable Shutdown** - Toggle `spot_handling.auto_terminate` to control post-finalization poweroff
+- **S3 Backup** - Automatic checkpoint upload to S3
 - **Auto Restore** - New instances resume from latest S3 checkpoint
 - **SSH Access** - Private key automatically generated
 - **Monitoring** - Production monitoring dashboard included
@@ -72,7 +71,7 @@ Available in config/:
 
 - **Interruption Monitoring** - 2-second polling via IMDSv2
 - **Graceful Shutdown** - 60-second checkpoint deadline
-- **S3 Integration** - Uses AWS CLI with instance IAM role credentials
+- **S3 Integration** - No AWS CLI needed, uses AWS Signature v4
 - **Deterministic Paths** - `s3://bucket/prefix/job-id/YYYY/MM/DD/HHMMSSZ/`
 - **Metadata Tracking** - Full checkpoint metadata with job tracking
 - **Single-Shot Protection** - Prevents duplicate interruption handling
@@ -109,13 +108,8 @@ sudo cloud-init status                            # Check setup status
 
 ### S3 Issues
 ```bash
-aws s3 cp file.txt s3://dxnn-checkpoints/test/file.txt --no-progress      # Test S3 upload
+/usr/local/bin/simple-s3-upload.sh file.txt test/file.txt    # Test S3 upload
 aws s3 ls s3://dxnn-checkpoints/dxnn/ --recursive            # List checkpoints
-# If AWS CLI is missing on Ubuntu 24.04+, install via the official bundle:
-curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o awscliv2.zip
-unzip awscliv2.zip
-sudo ./aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli --update
-rm -rf awscliv2.zip aws/
 ```  
 
 
@@ -131,6 +125,8 @@ AWS-Deployment/
 │   ├── spot-watch.service         # Systemd service definition
 │   ├── dxnn_ctl                   # DXNN control interface
 │   ├── restore-from-s3.sh         # S3 checkpoint restore
+│   ├── simple-s3-upload.sh        # S3 upload (no AWS CLI)
+│   ├── simple-s3-download.sh      # S3 download (no AWS CLI)
 │   └── monitor-production.sh      # Production monitoring dashboard
 ├── deploy.sh                      # Core deployment logic
 ├── docker-deploy.sh               # Main deployment wrapper
@@ -178,13 +174,19 @@ If you modify or add scripts, make sure the deployment process completes the upl
 
 **Manual verification (optional):**
 ```bash
+./docker-deploy.sh -c config/dxnn-spot-prod.yml
 ssh -i output/your-key.pem ubuntu@NEW_IP
 ls -la /var/lib/dxnn/checkpoints/          # Check restored files
 sudo tail -f /var/log/spot-restore.log     # View restore logs
 sudo tail -f /var/log/cloud-init-output.log
 tmux attach -t trader                      # Monitor resumed training
+tmux kill-session -t trader
+
 
 Detach from tmux: Ctrl+b then d
+
+cat /var/log/dxnn-setup.log
+
 ```
 
 ## 🎯 Example Workflow
