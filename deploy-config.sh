@@ -175,10 +175,12 @@ if [[ -n "$CONFIG_FILE" ]]; then
     # Compile on remote
     if [[ "$COMPILE" == "true" ]]; then
         log_info "Compiling config.erl on instance..."
-        if ssh_exec "cd /home/ubuntu/dxnn-trader && erlc config.erl" 2>&1; then
+        if ssh_exec "cd /home/ubuntu/dxnn-trader && erlc config.erl 2>&1"; then
             log_success "Config compiled successfully"
         else
             log_error "Config compilation failed"
+            log_info "Attempting to view compilation errors..."
+            ssh_exec "cd /home/ubuntu/dxnn-trader && erlc config.erl" 2>&1 || true
             exit 1
         fi
     fi
@@ -216,8 +218,13 @@ EOF
     # Recompile after git checkout
     if [[ "$COMPILE" == "true" ]]; then
         log_info "Recompiling DXNN after branch switch..."
-        ssh_exec "cd /home/ubuntu/dxnn-trader && make clean && make" 2>&1 | tail -5
-        log_success "DXNN recompiled"
+        ssh_exec "cd /home/ubuntu/dxnn-trader && rm -f *.beam && erl -noshell -eval 'make:all([load]), init:stop().'" 2>&1 | tail -10
+        if [ $? -eq 0 ]; then
+            log_success "DXNN recompiled"
+        else
+            log_error "DXNN compilation failed"
+            exit 1
+        fi
     fi
 fi
 
@@ -225,34 +232,103 @@ fi
 if [[ "$START_DXNN" == "true" ]]; then
     log_info "Starting DXNN training..."
     
+    # Validate required scripts exist
+    log_info "Validating required scripts on instance..."
+    MISSING_SCRIPTS=()
+    for script in dxnn-wrapper.sh dxnn_ctl finalize_run.sh dxnn-config.sh; do
+        if ! ssh_exec "test -x /usr/local/bin/$script" 2>/dev/null; then
+            MISSING_SCRIPTS+=("$script")
+        fi
+    done
+    
+    if [ ${#MISSING_SCRIPTS[@]} -gt 0 ]; then
+        log_error "Missing required scripts: ${MISSING_SCRIPTS[*]}"
+        log_error "Instance may not be fully initialized. Wait a few minutes and try again."
+        log_info "Or check cloud-init status: ssh -i $SSH_KEY ${SSH_USER}@${HOST} 'sudo cloud-init status'"
+        exit 1
+    fi
+    log_success "All required scripts present"
+    
     # Check if already running
     if ssh_exec "tmux has-session -t trader 2>/dev/null"; then
         log_warning "DXNN session already exists"
-        read -p "Kill existing session and restart? (yes/no): " confirm
-        if [[ "$confirm" == "yes" ]]; then
-            ssh_exec "tmux kill-session -t trader"
-            log_info "Killed existing session"
-        else
-            log_info "Keeping existing session"
-            exit 0
+        if [[ "$DRY_RUN" == "false" ]]; then
+            read -p "Kill existing session and restart? (yes/no): " confirm
+            if [[ "$confirm" == "yes" ]]; then
+                ssh_exec "tmux kill-session -t trader"
+                log_info "Killed existing session"
+            else
+                log_info "Keeping existing session"
+                exit 0
+            fi
         fi
     fi
     
+    # Verify DXNN directory exists and has code
+    log_info "Verifying DXNN installation..."
+    if ! ssh_exec "test -d /home/ubuntu/dxnn-trader" 2>/dev/null; then
+        log_error "DXNN directory not found: /home/ubuntu/dxnn-trader"
+        log_error "Instance may not be fully initialized. Wait for cloud-init to complete."
+        exit 1
+    fi
+    
+    if ! ssh_exec "test -f /home/ubuntu/dxnn-trader/launcher.erl" 2>/dev/null; then
+        log_error "launcher.erl not found - DXNN code not cloned"
+        log_error "Check cloud-init logs: ssh -i $SSH_KEY ${SSH_USER}@${HOST} 'sudo tail -100 /var/log/cloud-init-output.log'"
+        exit 1
+    fi
+    log_success "DXNN installation verified"
+    
     # Start via wrapper script
-    if ssh_exec "test -x /usr/local/bin/dxnn-wrapper.sh"; then
-        ssh_exec "nohup /usr/local/bin/dxnn-wrapper.sh > /dev/null 2>&1 &"
+    log_info "Launching DXNN wrapper script..."
+    ssh_exec "nohup /usr/local/bin/dxnn-wrapper.sh > /dev/null 2>&1 &"
+    
+    # Wait for tmux session to start
+    log_info "Waiting for DXNN to initialize..."
+    RETRY=0
+    MAX_RETRY=10
+    while [ $RETRY -lt $MAX_RETRY ]; do
         sleep 2
-        
         if ssh_exec "tmux has-session -t trader 2>/dev/null"; then
-            log_success "DXNN started successfully"
+            log_success "DXNN tmux session created"
+            break
+        fi
+        RETRY=$((RETRY + 1))
+        log_info "Waiting... ($RETRY/$MAX_RETRY)"
+    done
+    
+    if ssh_exec "tmux has-session -t trader 2>/dev/null"; then
+        # Verify Erlang shell is running
+        sleep 3
+        if ssh_exec "tmux capture-pane -t trader -p 2>/dev/null | grep -q 'Eshell\\|Erlang'" 2>/dev/null; then
+            log_success "DXNN started successfully - Erlang shell active"
             log_info "Attach with: ssh -i $SSH_KEY ${SSH_USER}@${HOST} -t 'tmux attach -t trader'"
+            log_info "Detach with: Ctrl+b then d"
         else
-            log_error "DXNN failed to start"
-            log_info "Check logs: ssh -i $SSH_KEY ${SSH_USER}@${HOST} 'tail -f /var/log/dxnn-run.log'"
-            exit 1
+            log_warning "DXNN session exists but Erlang shell not detected"
+            log_info "Check status: ssh -i $SSH_KEY ${SSH_USER}@${HOST} -t 'tmux attach -t trader'"
         fi
     else
-        log_error "dxnn-wrapper.sh not found on instance"
+        log_error "DXNN failed to start - tmux session not created"
+        echo ""
+        log_info "Diagnostic steps:"
+        log_info "1. Check wrapper logs:"
+        log_info "   ssh -i $SSH_KEY ${SSH_USER}@${HOST} 'tail -50 /var/log/dxnn-run.log'"
+        echo ""
+        log_info "2. Check if DXNN code exists:"
+        log_info "   ssh -i $SSH_KEY ${SSH_USER}@${HOST} 'ls -la /home/ubuntu/dxnn-trader/'"
+        echo ""
+        log_info "3. Check cloud-init status:"
+        log_info "   ssh -i $SSH_KEY ${SSH_USER}@${HOST} 'sudo cloud-init status'"
+        echo ""
+        log_info "4. Check cloud-init logs:"
+        log_info "   ssh -i $SSH_KEY ${SSH_USER}@${HOST} 'sudo tail -100 /var/log/cloud-init-output.log'"
+        echo ""
+        log_info "5. Try manual start:"
+        log_info "   ssh -i $SSH_KEY ${SSH_USER}@${HOST}"
+        log_info "   cd /home/ubuntu/dxnn-trader"
+        log_info "   erl -noshell -eval 'launcher:start().'"
+        echo ""
         exit 1
     fi
 fi

@@ -315,6 +315,94 @@ EOF
     log_success "Scripts uploaded and configured"
 }
 
+# Register deployment in dashboard tracking system
+register_deployment() {
+    local instance_id="$1"
+    local public_ip="$2"
+    local key_file="$3"
+    local deployments_file="$OUTPUT_DIR/deployments.json"
+    
+    # Convert relative path to absolute path for dashboard
+    local abs_key_file
+    if [[ "$key_file" = /* ]]; then
+        abs_key_file="$key_file"
+    else
+        abs_key_file="$(cd "$(dirname "$key_file")" && pwd)/$(basename "$key_file")"
+    fi
+    
+    # Adjust path for Docker container context
+    # If running inside Docker, paths should be /app/AWS-Deployment/...
+    if [[ -f "/.dockerenv" ]] || grep -q docker /proc/1/cgroup 2>/dev/null; then
+        abs_key_file="/app/AWS-Deployment/output/$(basename "$key_file")"
+    fi
+    
+    log_info "Registering deployment in dashboard tracking system..."
+    
+    # Create deployments file if it doesn't exist
+    if [[ ! -f "$deployments_file" ]]; then
+        echo '{}' > "$deployments_file"
+    fi
+    
+    # Get current timestamp in ISO8601 format
+    local deployed_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    
+    # Create temporary file for atomic update
+    local temp_file=$(mktemp)
+    
+    # Use jq if available, otherwise use Python
+    if command -v jq >/dev/null 2>&1; then
+        jq --arg id "$instance_id" \
+           --arg host "$public_ip" \
+           --arg key "$abs_key_file" \
+           --arg branch "main" \
+           --arg time "$deployed_at" \
+           '.[$id] = {
+               "instance_id": $id,
+               "host": $host,
+               "key_file": $key,
+               "branch": $branch,
+               "deployed_at": $time,
+               "started": false
+           }' "$deployments_file" > "$temp_file"
+    elif command -v python3 >/dev/null 2>&1; then
+        python3 << EOF > "$temp_file"
+import json
+import sys
+
+try:
+    with open("$deployments_file", "r") as f:
+        data = json.load(f)
+except:
+    data = {}
+
+data["$instance_id"] = {
+    "instance_id": "$instance_id",
+    "host": "$public_ip",
+    "key_file": "$abs_key_file",
+    "branch": "main",
+    "deployed_at": "$deployed_at",
+    "started": False
+}
+
+print(json.dumps(data, indent=2))
+EOF
+    else
+        log_warning "Neither jq nor python3 available, skipping dashboard registration"
+        rm -f "$temp_file"
+        return 1
+    fi
+    
+    # Atomic move
+    if [[ -s "$temp_file" ]]; then
+        mv "$temp_file" "$deployments_file"
+        log_success "Deployment registered in dashboard: $instance_id"
+    else
+        log_error "Failed to register deployment in dashboard"
+        rm -f "$temp_file"
+        return 1
+    fi
+}
+
 # Launch EC2 instance
 launch_instance() {
     local instance_type="${INSTANCE_TYPE:-$DEFAULT_INSTANCE_TYPE}"
@@ -426,6 +514,9 @@ EOF
     # Log launch details
     log_launch_details "$instance_id" "$public_ip" "$instance_type" "$ssh_key_path_relative" "$SSH_USER" "$app_type" "$MARKET_TYPE" "$SPOT_MAX_PRICE"
     
+    # Register deployment in dashboard tracking system
+    register_deployment "$instance_id" "$public_ip" "$OUTPUT_DIR/${key_name}-key.pem"
+    
     log_success "Deployment complete!"
     log_info "Instance ID: $instance_id"
     log_info "Public IP: $public_ip"
@@ -490,6 +581,43 @@ cleanup_resources() {
         aws ec2 terminate-instances --instance-ids $instances
         log_info "Waiting for instances to terminate..."
         aws ec2 wait instance-terminated --instance-ids $instances
+        
+        # Remove terminated instances from deployments.json
+        local deployments_file="$OUTPUT_DIR/deployments.json"
+        if [[ -f "$deployments_file" ]]; then
+            log_info "Cleaning up deployment tracking..."
+            local temp_file=$(mktemp)
+            
+            if command -v jq >/dev/null 2>&1; then
+                # Remove all terminated instance IDs from deployments.json
+                local jq_filter='.'
+                for instance_id in $instances; do
+                    jq_filter="$jq_filter | del(.\"$instance_id\")"
+                done
+                jq "$jq_filter" "$deployments_file" > "$temp_file"
+                mv "$temp_file" "$deployments_file"
+                log_success "Deployment tracking cleaned up"
+            elif command -v python3 >/dev/null 2>&1; then
+                python3 << EOF > "$temp_file"
+import json
+try:
+    with open("$deployments_file", "r") as f:
+        data = json.load(f)
+except:
+    data = {}
+
+terminated = "$instances".split()
+for instance_id in terminated:
+    data.pop(instance_id, None)
+
+print(json.dumps(data, indent=2))
+EOF
+                mv "$temp_file" "$deployments_file"
+                log_success "Deployment tracking cleaned up"
+            else
+                rm -f "$temp_file"
+            fi
+        fi
     fi
     
     # Cleanup key pairs

@@ -40,6 +40,7 @@ dxnn_assign_default RUN_ID "" ""
 # Artifacts to capture from the DXNN workspace
 ARTIFACT_DIRS=("Mnesia.nonode@nohost" "logs")
 ARTIFACT_FILES=("config.erl")
+# Note: agent_trades.log is inside logs/Benchmarker/ and will be captured by ARTIFACT_DIRS
 dxnn_assign_default AUTO_TERMINATE_DEFAULT "${DXNN_CFG_AUTO_TERMINATE:-false}" "false"
 dxnn_assign_default AUTO_TERMINATE "${DXNN_CFG_AUTO_TERMINATE:-false}" "false"
 dxnn_finalize_bool AUTO_TERMINATE_DEFAULT "${DXNN_CFG_AUTO_TERMINATE:-false}"
@@ -283,6 +284,12 @@ upload_file_to_s3() {
     local source_file="$1"
     local s3_key="$2"
     
+    # Check if source file exists before attempting upload
+    if [[ ! -f "$source_file" ]]; then
+        log "WARN" "Source file does not exist, skipping: $source_file"
+        return 1
+    fi
+    
     for attempt in $(seq 0 $((MAX_RETRIES - 1))); do
         log "INFO" "S3 upload attempt $((attempt + 1))/$MAX_RETRIES: $s3_key"
 
@@ -314,6 +321,12 @@ upload_selected_artifacts() {
     : > "$MANIFEST_FILE"
 
     while IFS= read -r -d '' file; do
+        # Verify file still exists (could have been deleted between enumeration and upload)
+        if [[ ! -f "$file" ]]; then
+            log "WARN" "File disappeared before upload, skipping: $file"
+            continue
+        fi
+        
         local relative_path="${file#$source_dir/}"
         if [[ "$relative_path" == "$file" ]]; then
             relative_path="$(basename "$file")"

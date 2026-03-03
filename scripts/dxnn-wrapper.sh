@@ -99,10 +99,11 @@ if [[ -n "$ERLANG_COOKIE" ]]; then
     log_runner "Starting with distributed Erlang: dxnn@$HOSTNAME"
     erl -name "dxnn@$HOSTNAME" \
         -setcookie "$ERLANG_COOKIE" \
-        -eval "make:all()"
+        -noshell \
+        -eval "launcher:start()"
 else
     log_runner "Starting without distributed Erlang (no cookie found)"
-    erl -noshell -eval "make:all()"
+    erl -noshell -eval "launcher:start()"
 fi
 
 exit_code=$?
