@@ -10,7 +10,7 @@ OUTPUT_DIR="${SCRIPT_DIR}/output"
 # Default values
 DEFAULT_REGION="us-east-1"
 DEFAULT_BASE_AMI="ami-020cba7c55df1f615"  # Ubuntu 24.04 LTS
-DEFAULT_INSTANCE_TYPE="t3.medium"
+DEFAULT_INSTANCE_TYPE="t2.micro"
 AMI_PREFIX="dxnn-trader"
 DXNN_REPO="https://github.com/qendro/DXNN-Trader-v2.git"
 DXNN_VERSION="main"
