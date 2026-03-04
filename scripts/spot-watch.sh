@@ -24,7 +24,6 @@ dxnn_assign_default CHECKPOINT_DEADLINE "${DXNN_CFG_CHECKPOINT_DEADLINE:-60}" "6
 dxnn_assign_default POLL_INTERVAL "${DXNN_CFG_POLL_INTERVAL:-4}" "4"
 dxnn_assign_default S3_BUCKET "${DXNN_CFG_S3_BUCKET:-dxnn-checkpoints}" "dxnn-checkpoints"
 dxnn_assign_default S3_PREFIX "${DXNN_CFG_S3_PREFIX:-dxnn}" "dxnn"
-dxnn_assign_default JOB_ID "${DXNN_CFG_JOB_ID:-dxnn-training-001}" "dxnn-training-001"
 dxnn_assign_default CONTAINER_NAME "${DXNN_CFG_CONTAINER_NAME:-dxnn-app}" "dxnn-app"
 dxnn_assign_default ERLANG_NODE "${DXNN_CFG_ERLANG_NODE:-dxnn@127.0.0.1}" "dxnn@127.0.0.1"
 dxnn_assign_default ERLANG_COOKIE_FILE "${DXNN_CFG_ERLANG_COOKIE_FILE:-/var/lib/dxnn/.erlang.cookie}" "/var/lib/dxnn/.erlang.cookie"
@@ -167,7 +166,8 @@ main() {
     export EXIT_CODE="1"
     export S3_BUCKET="$S3_BUCKET"
     export S3_PREFIX="$S3_PREFIX"
-    export JOB_ID="$JOB_ID"
+    export POPULATION_ID="${POPULATION_ID:-unknown}"
+    export LINEAGE_ID="${LINEAGE_ID:-unknown}"
     export RUN_ID="${RUN_ID:-$(date -u +%Y%m%d-%H%M%SZ)}"
     export AUTO_TERMINATE="${AUTO_TERMINATE:-$AUTO_TERMINATE_DEFAULT}"
     export AUTO_TERMINATE_DEFAULT

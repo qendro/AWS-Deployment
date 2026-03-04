@@ -19,7 +19,6 @@ spot_handling:
   poll_interval_seconds: 4
   s3_bucket: "dxnn-checkpoints"
   s3_prefix: "dxnn-prod"
-  job_id: "dxnn-prod-training-001"
   container_name: "dxnn-app"
   erlang_node: "dxnn@127.0.0.1"
   erlang_cookie_file: "/var/lib/dxnn/.erlang.cookie"

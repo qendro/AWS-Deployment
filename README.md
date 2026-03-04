@@ -134,8 +134,8 @@ Available in config/:
 - **Interruption Monitoring** - 2-second polling via IMDSv2
 - **Graceful Shutdown** - 60-second checkpoint deadline
 - **S3 Integration** - No AWS CLI needed, uses AWS Signature v4
-- **Deterministic Paths** - `s3://bucket/prefix/job-id/YYYY/MM/DD/HHMMSSZ/`
-- **Metadata Tracking** - Full checkpoint metadata with job tracking
+- **Lineage-Based Paths** - `s3://bucket/prefix/lineage_id/population_id/`
+- **Metadata Tracking** - Full checkpoint metadata with lineage tracking
 - **Single-Shot Protection** - Prevents duplicate interruption handling
 
 ## 🔧 Requirements

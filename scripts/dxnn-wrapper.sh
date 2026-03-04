@@ -28,7 +28,6 @@ load_dxnn_config
 
 dxnn_assign_default S3_BUCKET "${DXNN_CFG_S3_BUCKET:-dxnn-checkpoints}" "dxnn-checkpoints"
 dxnn_assign_default S3_PREFIX "${DXNN_CFG_S3_PREFIX:-dxnn}" "dxnn"
-dxnn_assign_default JOB_ID "${DXNN_CFG_JOB_ID:-dxnn-training-001}" "dxnn-training-001"
 dxnn_assign_default RESTORE_FROM_S3 "${DXNN_CFG_RESTORE_FROM_S3:-false}" "false"
 dxnn_assign_default AUTO_TERMINATE "${DXNN_CFG_AUTO_TERMINATE:-false}" "false"
 dxnn_assign_default AUTO_TERMINATE_DEFAULT "${DXNN_CFG_AUTO_TERMINATE:-false}" "false"
@@ -40,7 +39,7 @@ dxnn_finalize_bool AUTO_TERMINATE_DEFAULT "${DXNN_CFG_AUTO_TERMINATE:-false}"
 AUTO_TERMINATE="${AUTO_TERMINATE:-$DXNN_CFG_AUTO_TERMINATE}"
 AUTO_TERMINATE_DEFAULT="$AUTO_TERMINATE"
 
-export S3_BUCKET S3_PREFIX JOB_ID RESTORE_FROM_S3 AUTO_TERMINATE AUTO_TERMINATE_DEFAULT
+export S3_BUCKET S3_PREFIX RESTORE_FROM_S3 AUTO_TERMINATE AUTO_TERMINATE_DEFAULT
 
 # Configuration
 LOG_FILE="/var/log/dxnn-run.log"
@@ -51,6 +50,7 @@ SESSION_EXIT_CODE_FILE="/tmp/dxnn_exit_code"
 TMUX_RUNNER_SCRIPT="/tmp/dxnn_tmux_runner.sh"
 
 export RUN_ID="${RUN_ID:-$(date -u +%Y%m%d-%H%M%SZ)}"
+export POPULATION_ID="${POPULATION_ID:-unknown}"
 
 # Logging function with UTC timestamps
 log() {
@@ -79,6 +79,19 @@ set -euo pipefail
 
 log_runner() {
     printf '[%s] INFO: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$1" >> "$LOG_FILE"
+}
+
+# Extract population_id from Erlang output if available
+extract_population_id() {
+    if [[ -f "$LOG_FILE" ]]; then
+        # Look for population_id in logs (format: population_id=<<"2025-02-11T15-30-45Z_a3f9_run1">>)
+        local pop_id=$(grep -oP 'population_id=<<"\K[^"]+' "$LOG_FILE" 2>/dev/null | tail -1)
+        if [[ -n "$pop_id" ]]; then
+            echo "$pop_id"
+            return 0
+        fi
+    fi
+    echo "unknown"
 }
 
 log_runner "TMUX_SESSION_START - Starting DXNN training"
@@ -149,6 +162,17 @@ run_dxnn() {
         log "WARN" "DXNN_EXIT_CODE_MISSING - Defaulting to 1"
     fi
 
+    # Extract population_id from logs after run completes
+    POPULATION_ID=$(extract_population_id)
+    export POPULATION_ID
+    
+    # Extract lineage_id from population_id
+    if [[ "$POPULATION_ID" != "unknown" ]]; then
+        LINEAGE_ID=$(echo "$POPULATION_ID" | awk -F'_' '{print $2}')
+        export LINEAGE_ID
+        log "INFO" "DXNN_POPULATION_EXTRACTED - population_id=$POPULATION_ID lineage_id=$LINEAGE_ID"
+    fi
+
     rm -f "$SESSION_EXIT_CODE_FILE" "$TMUX_RUNNER_SCRIPT"
     log "INFO" "DXNN_PROCESS_END - Session completed with code: $exit_code"
     return $exit_code
@@ -173,7 +197,7 @@ finalize() {
     export EXIT_CODE="$exit_code"
     
     log "INFO" "FINALIZER_CALL - Calling finalize_run.sh with status: $completion_status, exit: $exit_code"
-    log "INFO" "S3_UPLOAD_START - Beginning upload to s3://$S3_BUCKET/$S3_PREFIX/$JOB_ID/$RUN_ID/"
+    log "INFO" "S3_UPLOAD_START - Beginning upload to s3://$S3_BUCKET/$S3_PREFIX/$LINEAGE_ID/$POPULATION_ID/"
     
     # Call finalizer script
     if [[ -x "$FINALIZER_SCRIPT" ]]; then
@@ -189,7 +213,7 @@ finalize() {
 # Main execution
 main() {
     log "INFO" "WRAPPER_INIT - Starting DXNN wrapper with Run ID: $RUN_ID"
-    log "INFO" "WRAPPER_CONFIG - S3 destination: s3://$S3_BUCKET/$S3_PREFIX/$JOB_ID/$RUN_ID/"
+    log "INFO" "WRAPPER_CONFIG - S3 destination: s3://$S3_BUCKET/$S3_PREFIX/<lineage_id>/<population_id>/"
     
     # Run DXNN and capture exit code
     local exit_code=0

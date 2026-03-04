@@ -24,10 +24,10 @@ load_dxnn_config
 AWS_CLI_BIN="${AWS_CLI_BIN:-aws}"
 dxnn_assign_default S3_BUCKET "${DXNN_CFG_S3_BUCKET:-dxnn-checkpoints}" "dxnn-checkpoints"
 dxnn_assign_default S3_PREFIX "${DXNN_CFG_S3_PREFIX:-dxnn}" "dxnn"
-dxnn_assign_default JOB_ID "${DXNN_CFG_JOB_ID:-dxnn-training-001}" "dxnn-training-001"
+dxnn_assign_default LINEAGE_ID "${DXNN_CFG_LINEAGE_ID:-}" ""
 dxnn_assign_default RESTORE_FROM_S3 "${DXNN_CFG_RESTORE_FROM_S3:-false}" "false"
 dxnn_finalize_bool RESTORE_FROM_S3 "${DXNN_CFG_RESTORE_FROM_S3:-false}"
-RUN_ID=""
+POPULATION_ID=""
 DXNN_DIR="/home/ubuntu/dxnn-trader"
 RESTORE_LOG="/var/log/dxnn-restore.log"
 
@@ -46,17 +46,17 @@ fi
 if [[ -n "${RESTORE_S3_PREFIX:-}" ]]; then
     S3_PREFIX="$RESTORE_S3_PREFIX"
 fi
-if [[ -n "${RESTORE_JOB_ID:-}" ]]; then
-    JOB_ID="$RESTORE_JOB_ID"
+if [[ -n "${RESTORE_LINEAGE_ID:-}" ]]; then
+    LINEAGE_ID="$RESTORE_LINEAGE_ID"
 fi
-if [[ -n "${RESTORE_RUN_ID:-}" ]]; then
-    RUN_ID="$RESTORE_RUN_ID"
+if [[ -n "${RESTORE_POPULATION_ID:-}" ]]; then
+    POPULATION_ID="$RESTORE_POPULATION_ID"
 fi
 if [[ -n "${RESTORE_DXNN_DIR:-}" ]]; then
     DXNN_DIR="$RESTORE_DXNN_DIR"
 fi
 
-export S3_BUCKET S3_PREFIX JOB_ID RUN_ID DXNN_DIR
+export S3_BUCKET S3_PREFIX LINEAGE_ID POPULATION_ID DXNN_DIR
 
 aws_s3_cp() {
     "$AWS_CLI_BIN" s3 cp "$@" "${AWS_S3_ARGS[@]}"
@@ -207,29 +207,34 @@ require_aws_cli() {
     return 1
 }
 
-resolve_run_id() {
-    if [[ -n "$RUN_ID" ]]; then
-        log "INFO" "Using provided RUN_ID=$RUN_ID"
+resolve_population_id() {
+    if [[ -n "$POPULATION_ID" ]]; then
+        log "INFO" "Using provided POPULATION_ID=$POPULATION_ID"
         return 0
     fi
 
-    local pointer_key="$S3_PREFIX/$JOB_ID/_LATEST_RUN"
+    if [[ -z "$LINEAGE_ID" ]]; then
+        log "WARN" "No LINEAGE_ID provided - cannot resolve population"
+        return 1
+    fi
+
+    local pointer_key="$S3_PREFIX/$LINEAGE_ID/_LATEST_RUN"
     local pointer_tmp
     pointer_tmp=$(mktemp)
 
     if aws_s3_cp "s3://$S3_BUCKET/$pointer_key" "$pointer_tmp" >/dev/null 2>&1; then
         if command -v jq >/dev/null 2>&1; then
-            RUN_ID=$(jq -r '.run_id // empty' "$pointer_tmp")
+            POPULATION_ID=$(jq -r '.population_id // empty' "$pointer_tmp")
         else
-            RUN_ID=$(sed -n 's/.*"run_id"[[:space:]]*:[[:space:]]*"\([^\"]*\)".*/\1/p' "$pointer_tmp" | head -n1)
+            POPULATION_ID=$(sed -n 's/.*"population_id"[[:space:]]*:[[:space:]]*"\([^\"]*\)".*/\1/p' "$pointer_tmp" | head -n1)
         fi
         rm -f "$pointer_tmp"
 
-        if [[ -z "$RUN_ID" ]]; then
-            log "WARN" "Latest pointer file present but missing run_id"
+        if [[ -z "$POPULATION_ID" ]]; then
+            log "WARN" "Latest pointer file present but missing population_id"
             return 1
         fi
-        log "INFO" "Resolved RUN_ID=$RUN_ID from latest pointer"
+        log "INFO" "Resolved POPULATION_ID=$POPULATION_ID from latest pointer"
         return 0
     fi
 
@@ -239,7 +244,7 @@ resolve_run_id() {
 }
 
 restore_manifest() {
-    local manifest_key="$S3_PREFIX/$JOB_ID/$RUN_ID/_MANIFEST"
+    local manifest_key="$S3_PREFIX/$LINEAGE_ID/$POPULATION_ID/_MANIFEST"
     local manifest_tmp
     manifest_tmp=$(mktemp)
 
@@ -260,7 +265,7 @@ restore_manifest() {
         target_dir=$(dirname "$target_path")
         mkdir -p "$target_dir"
 
-        local object_key="$S3_PREFIX/$JOB_ID/$RUN_ID/$relative_path"
+        local object_key="$S3_PREFIX/$LINEAGE_ID/$POPULATION_ID/$relative_path"
         if aws_s3_cp "s3://$S3_BUCKET/$object_key" "$target_path" >/dev/null 2>&1; then
             log "INFO" "Restored $relative_path"
             if [[ -n "${file_mode:-}" && "$file_mode" =~ ^[0-7]{3,4}$ ]]; then
@@ -308,8 +313,8 @@ main() {
         exit 0
     fi
 
-    if ! resolve_run_id; then
-        log "INFO" "Restore skipped - no previous run id"
+    if ! resolve_population_id; then
+        log "INFO" "Restore skipped - no previous population id"
         exit 0
     fi
 
@@ -321,7 +326,7 @@ main() {
     fi
     case "$status" in
         0)
-            log "INFO" "Restore completed for RUN_ID=$RUN_ID"
+            log "INFO" "Restore completed for POPULATION_ID=$POPULATION_ID"
             ;;
         1)
             log "INFO" "Restore skipped - manifest missing"

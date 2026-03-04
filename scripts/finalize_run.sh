@@ -34,8 +34,20 @@ MANIFEST_FILE="/tmp/dxnn_manifest.txt"
 # S3 Configuration (from environment or config)
 dxnn_assign_default S3_BUCKET "${DXNN_CFG_S3_BUCKET:-dxnn-checkpoints}" "dxnn-checkpoints"
 dxnn_assign_default S3_PREFIX "${DXNN_CFG_S3_PREFIX:-dxnn}" "dxnn"
-dxnn_assign_default JOB_ID "${DXNN_CFG_JOB_ID:-}" ""
-dxnn_assign_default RUN_ID "" ""
+dxnn_assign_default POPULATION_ID "${POPULATION_ID:-}" ""
+dxnn_assign_default LINEAGE_ID "" ""
+
+# Extract lineage_id from population_id if not provided
+# Format: 2025-02-11T15-30-45Z_a3f9_run1 -> a3f9
+if [[ -z "$LINEAGE_ID" && -n "$POPULATION_ID" ]]; then
+    LINEAGE_ID=$(echo "$POPULATION_ID" | awk -F'_' '{print $2}')
+fi
+
+# If still no lineage_id, we cannot proceed
+if [[ -z "$LINEAGE_ID" ]]; then
+    log "ERROR" "LINEAGE_ID could not be determined from POPULATION_ID=$POPULATION_ID"
+    exit 1
+fi
 
 # Artifacts to capture - now from checkpoint directory
 # The checkpoint directory contains:
@@ -250,8 +262,8 @@ enumerate_artifacts() {
 
 # Check if required environment variables are set
 check_config() {
-    if [[ -z "$S3_BUCKET" || -z "$JOB_ID" || -z "$RUN_ID" ]]; then
-        log "ERROR" "Missing required configuration: S3_BUCKET=$S3_BUCKET JOB_ID=$JOB_ID RUN_ID=$RUN_ID"
+    if [[ -z "$S3_BUCKET" || -z "$LINEAGE_ID" || -z "$POPULATION_ID" ]]; then
+        log "ERROR" "Missing required configuration: S3_BUCKET=$S3_BUCKET LINEAGE_ID=$LINEAGE_ID POPULATION_ID=$POPULATION_ID"
         exit 1
     fi
 
@@ -260,7 +272,7 @@ check_config() {
 
 # Check if S3 sentinel already exists using AWS CLI
 check_s3_sentinel() {
-    local s3_key="$S3_PREFIX/$JOB_ID/$RUN_ID/_SUCCESS"
+    local s3_key="$S3_PREFIX/$LINEAGE_ID/$POPULATION_ID/_SUCCESS"
     local temp_file="/tmp/_SUCCESS_check"
 
     if aws_s3_cp "s3://$S3_BUCKET/$s3_key" "$temp_file" >/dev/null 2>&1; then
@@ -358,12 +370,13 @@ upload_checkpoint_to_s3() {
 create_s3_sentinel() {
     local status="$1"
     local sentinel_file="/tmp/_SUCCESS"
-    local s3_key="$S3_PREFIX/$JOB_ID/$RUN_ID/_SUCCESS"
+    local s3_key="$S3_PREFIX/$LINEAGE_ID/$POPULATION_ID/_SUCCESS"
     
     # Create sentinel with metadata
     cat > "$sentinel_file" << EOF
 {
-    "run_id": "$RUN_ID",
+    "population_id": "$POPULATION_ID",
+    "lineage_id": "$LINEAGE_ID",
     "finalized_at": "$(date -u '+%Y-%m-%dT%H:%M:%SZ')",
     "status": "$status",
     "completion_status": "$COMPLETION_STATUS",
@@ -387,17 +400,18 @@ EOF
 # Update pointer to latest successful run
 update_latest_pointer() {
     local pointer_file="/tmp/_LATEST_RUN"
-    local s3_key="$S3_PREFIX/$JOB_ID/_LATEST_RUN"
+    local s3_key="$S3_PREFIX/$LINEAGE_ID/_LATEST_RUN"
 
     cat > "$pointer_file" << EOF
 {
-    "run_id": "$RUN_ID",
+    "population_id": "$POPULATION_ID",
+    "lineage_id": "$LINEAGE_ID",
     "updated_at": "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 }
 EOF
 
     if upload_file_to_s3 "$pointer_file" "$s3_key"; then
-        log "INFO" "LATEST_PTR_UPDATED - Updated pointer to $RUN_ID"
+        log "INFO" "LATEST_PTR_UPDATED - Updated pointer to $POPULATION_ID"
     else
         log "WARN" "LATEST_PTR_FAILED - Could not update latest run pointer"
     fi
@@ -407,7 +421,7 @@ EOF
 
 # Upload manifest describing artifacts
 upload_manifest() {
-    local s3_manifest_key="$S3_PREFIX/$JOB_ID/$RUN_ID/_MANIFEST"
+    local s3_manifest_key="$S3_PREFIX/$LINEAGE_ID/$POPULATION_ID/_MANIFEST"
 
     if [[ ! -s "$MANIFEST_FILE" ]]; then
         log "INFO" "MANIFEST_EMPTY - No files recorded; skipping manifest upload"
@@ -426,11 +440,12 @@ upload_manifest() {
 # Create failure sentinel
 create_failure_sentinel() {
     local sentinel_file="/tmp/_FAILED_UPLOAD"
-    local s3_key="$S3_PREFIX/$JOB_ID/$RUN_ID/_FAILED_UPLOAD"
+    local s3_key="$S3_PREFIX/$LINEAGE_ID/$POPULATION_ID/_FAILED_UPLOAD"
     
     cat > "$sentinel_file" << EOF
 {
-    "run_id": "$RUN_ID",
+    "population_id": "$POPULATION_ID",
+    "lineage_id": "$LINEAGE_ID",
     "failed_at": "$(date -u '+%Y-%m-%dT%H:%M:%SZ')",
     "completion_status": "$COMPLETION_STATUS",
     "exit_code": $EXIT_CODE,
@@ -479,7 +494,7 @@ finalize() {
     fi
     
     # Upload checkpoint to S3
-    local s3_prefix="$S3_PREFIX/$JOB_ID/$RUN_ID"
+    local s3_prefix="$S3_PREFIX/$LINEAGE_ID/$POPULATION_ID"
     if upload_checkpoint_to_s3 "$latest_checkpoint" "$s3_prefix"; then
         # Upload main log file (not in checkpoint)
         if [[ -f "$LOG_FILE" ]]; then

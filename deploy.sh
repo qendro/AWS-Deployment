@@ -165,9 +165,6 @@ log_launch_details() {
     # Get or generate RUN_ID
     local run_id="${RUN_ID:-$(date -u +%Y%m%d-%H%M%SZ)}"
     
-    # Get JOB_ID (empty if not set)
-    local job_id="${JOB_ID:-}"
-    
     # Get git info
     local git_repo=$(git config --get remote.origin.url 2>/dev/null || echo "unknown")
     local git_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
@@ -207,10 +204,6 @@ EOF
         echo "Market: on-demand" >> "$temp_file"
     fi
     
-    # Add job and app info
-    if [[ -n "$job_id" ]]; then
-        echo "Job: $job_id" >> "$temp_file"
-    fi
     echo "App: $app_type" >> "$temp_file"
     
     # Add git info
@@ -654,7 +647,7 @@ validate_spot_config() {
         
         # Required fields when S3 restore is enabled
         if [[ "$RESTORE_FROM_S3" == "true" ]]; then
-            [[ -z "$JOB_ID" ]] && { log_error "job_id is required when restore_from_s3_on_boot=true"; exit 1; }
+            log_warn "S3 restore enabled but lineage_id will be auto-detected from checkpoints"
         fi
         
         log_info "Spot configuration validated successfully"
@@ -684,7 +677,6 @@ load_config() {
         POLL_INTERVAL=$(yq e '.spot_handling.poll_interval_seconds' "$config_file")
         S3_BUCKET=$(yq e '.spot_handling.s3_bucket' "$config_file")
         S3_PREFIX=$(yq e '.spot_handling.s3_prefix' "$config_file")
-        JOB_ID=$(yq e '.spot_handling.job_id' "$config_file")
         CONTAINER_NAME=$(yq e '.spot_handling.container_name' "$config_file")
         ERLANG_NODE=$(yq e '.spot_handling.erlang_node' "$config_file")
         ERLANG_COOKIE_FILE=$(yq e '.spot_handling.erlang_cookie_file' "$config_file")
@@ -717,7 +709,6 @@ load_config() {
             log_info "Spot Enabled: $SPOT_ENABLED"
             log_info "S3 Bucket: $S3_BUCKET"
             log_info "S3 Prefix: $S3_PREFIX"
-            log_info "Job ID: $JOB_ID"
             log_info "Checkpoint Deadline: $CHECKPOINT_DEADLINE"
             log_info "Poll Interval: $POLL_INTERVAL"
             log_info "Restore on Boot: $RESTORE_FROM_S3"
@@ -769,7 +760,7 @@ main() {
         
         # S3 will be used only for checkpoint storage
         log_info "S3 folder structure:"
-        log_info "  s3://$S3_BUCKET/$S3_PREFIX/$JOB_ID/RUN_ID/ (checkpoints & logs)"
+        log_info "  s3://$S3_BUCKET/$S3_PREFIX/<lineage_id>/<population_id>/ (checkpoints & logs)"
     fi
     
     launch_instance

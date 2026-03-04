@@ -19,7 +19,6 @@ spot_handling:
   poll_interval_seconds: 4
   s3_bucket: "dxnn-checkpoints"
   s3_prefix: "dxnn-prod"
-  job_id: "dxnn-prod-training-001"
   container_name: "dxnn-app"
   erlang_node: "dxnn@127.0.0.1"
   erlang_cookie_file: "/var/lib/dxnn/.erlang.cookie"
@@ -124,13 +123,11 @@ application:
 
           S3_BUCKET_VALUE="${S3_BUCKET:-${DXNN_CFG_S3_BUCKET:-dxnn-checkpoints}}"
           S3_PREFIX_VALUE="${S3_PREFIX:-${DXNN_CFG_S3_PREFIX:-dxnn}}"
-          JOB_ID_VALUE="${JOB_ID:-${DXNN_CFG_JOB_ID:-dxnn-training-001}}"
 
           if [[ "$RESTORE_FROM_S3_VALUE" == "true" ]]; then
             if [[ -x /usr/local/bin/restore-from-s3.sh ]]; then
               RESTORE_S3_BUCKET="$S3_BUCKET_VALUE" \
               RESTORE_S3_PREFIX="$S3_PREFIX_VALUE" \
-              RESTORE_JOB_ID="$JOB_ID_VALUE" \
               RESTORE_DXNN_DIR="/home/ubuntu/dxnn-trader" \
               RESTORE_CHOWN_USER="ubuntu" \
               RESTORE_CHOWN_GROUP="ubuntu" \
@@ -154,7 +151,6 @@ application:
             load_dxnn_config
             dxnn_assign_default S3_BUCKET "${DXNN_CFG_S3_BUCKET:-dxnn-checkpoints}" "dxnn-checkpoints"
             dxnn_assign_default S3_PREFIX "${DXNN_CFG_S3_PREFIX:-dxnn}" "dxnn"
-            dxnn_assign_default JOB_ID "${DXNN_CFG_JOB_ID:-dxnn-training-001}" "dxnn-training-001"
             dxnn_assign_default AUTO_TERMINATE "${DXNN_CFG_AUTO_TERMINATE:-false}" "false"
             dxnn_assign_default AUTO_TERMINATE_DEFAULT "${DXNN_CFG_AUTO_TERMINATE:-false}" "false"
             dxnn_finalize_bool AUTO_TERMINATE "${DXNN_CFG_AUTO_TERMINATE:-false}"

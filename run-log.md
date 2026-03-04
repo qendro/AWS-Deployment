@@ -1231,3 +1231,36 @@ Market: spot | Max Price: $0.38
 Job: dxnn-prod-training-001
 App: dxnn-spot
 Repo: https://github.com/qendro/AWS-Deployment.git | main
+
+═══════════════════════════════════════════════════════════════════
+2026-03-04T01:25:31Z | run-id=20260304-012531Z
+═══════════════════════════════════════════════════════════════════
+
+ssh -i ./output/aws-deployment-key-20260304-012503-key.pem ubuntu@54.167.207.46
+Instance: i-0fc189b7e82772416 | m5.large
+Market: spot | Max Price: $0.38
+Job: dxnn-prod-training-001
+App: dxnn-spot
+Repo: https://github.com/qendro/AWS-Deployment.git | main
+
+═══════════════════════════════════════════════════════════════════
+2026-03-04T01:30:21Z | run-id=20260304-013021Z
+═══════════════════════════════════════════════════════════════════
+
+ssh -i ./output/aws-deployment-key-20260304-012954-key.pem ubuntu@3.88.136.118
+Instance: i-0fd974cce9ed094cb | m5.large
+Market: spot | Max Price: $0.38
+Job: dxnn-prod-training-001
+App: dxnn-spot
+Repo: https://github.com/qendro/AWS-Deployment.git | main
+
+═══════════════════════════════════════════════════════════════════
+2026-03-04T01:32:39Z | run-id=20260304-013239Z
+═══════════════════════════════════════════════════════════════════
+
+ssh -i ./output/aws-deployment-key-20260304-013211-key.pem ubuntu@54.225.52.240
+Instance: i-0bd4f43b11defcdf8 | m5.large
+Market: spot | Max Price: $0.38
+Job: dxnn-prod-training-001
+App: dxnn-spot
+Repo: https://github.com/qendro/AWS-Deployment.git | main

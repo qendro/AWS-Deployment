@@ -106,7 +106,6 @@ load_dxnn_config() {
     local cfg_restore_from_s3="false"
     local cfg_s3_bucket="dxnn-checkpoints"
     local cfg_s3_prefix="dxnn"
-    local cfg_job_id="dxnn-training-001"
     local cfg_container_name="dxnn-app"
     local cfg_erlang_node="dxnn@127.0.0.1"
     local cfg_erlang_cookie="/var/lib/dxnn/.erlang.cookie"
@@ -128,9 +127,6 @@ load_dxnn_config() {
 
         value=$(yq -r '.spot_handling.s3_prefix // ""' "$config_file" 2>/dev/null || echo "")
         [[ "$value" != "null" && -n "$value" ]] && cfg_s3_prefix="$value"
-
-        value=$(yq -r '.spot_handling.job_id // ""' "$config_file" 2>/dev/null || echo "")
-        [[ "$value" != "null" && -n "$value" ]] && cfg_job_id="$value"
 
         value=$(yq -r '.spot_handling.container_name // ""' "$config_file" 2>/dev/null || echo "")
         [[ "$value" != "null" && -n "$value" ]] && cfg_container_name="$value"
@@ -156,7 +152,6 @@ load_dxnn_config() {
     export DXNN_CFG_RESTORE_FROM_S3="$cfg_restore_from_s3"
     export DXNN_CFG_S3_BUCKET="$cfg_s3_bucket"
     export DXNN_CFG_S3_PREFIX="$cfg_s3_prefix"
-    export DXNN_CFG_JOB_ID="$cfg_job_id"
     export DXNN_CFG_CONTAINER_NAME="$cfg_container_name"
     export DXNN_CFG_ERLANG_NODE="$cfg_erlang_node"
     export DXNN_CFG_ERLANG_COOKIE_FILE="$cfg_erlang_cookie"
