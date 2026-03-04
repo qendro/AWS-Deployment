@@ -37,10 +37,14 @@ dxnn_assign_default S3_PREFIX "${DXNN_CFG_S3_PREFIX:-dxnn}" "dxnn"
 dxnn_assign_default JOB_ID "${DXNN_CFG_JOB_ID:-}" ""
 dxnn_assign_default RUN_ID "" ""
 
-# Artifacts to capture from the DXNN workspace
-ARTIFACT_DIRS=("Mnesia.nonode@nohost" "logs")
-ARTIFACT_FILES=("config.erl")
-# Note: agent_trades.log is inside logs/Benchmarker/ and will be captured by ARTIFACT_DIRS
+# Artifacts to capture - now from checkpoint directory
+# The checkpoint directory contains:
+#   - Mnesia.nonode@nohost/ (full database)
+#   - logs/ (all logs)
+#   - config.erl
+#   - _CHECKPOINT_INFO (metadata)
+CHECKPOINT_BASE_DIR="/var/lib/dxnn/checkpoints"
+
 dxnn_assign_default AUTO_TERMINATE_DEFAULT "${DXNN_CFG_AUTO_TERMINATE:-false}" "false"
 dxnn_assign_default AUTO_TERMINATE "${DXNN_CFG_AUTO_TERMINATE:-false}" "false"
 dxnn_finalize_bool AUTO_TERMINATE_DEFAULT "${DXNN_CFG_AUTO_TERMINATE:-false}"
@@ -231,28 +235,17 @@ log() {
 }
 
 enumerate_artifacts() {
-    local base_dir="$1"
-    local rel path
-
-    for rel in "${ARTIFACT_DIRS[@]}"; do
-        path="$base_dir/$rel"
-        if [[ -d "$path" ]]; then
-            while IFS= read -r -d '' file; do
-                printf '%s\0' "$file"
-            done < <(find "$path" -type f -print0)
-        else
-            log "INFO" "Artifact directory missing, skipping: $rel"
-        fi
-    done
-
-    for rel in "${ARTIFACT_FILES[@]}"; do
-        path="$base_dir/$rel"
-        if [[ -f "$path" ]]; then
-            printf '%s\0' "$path"
-        else
-            log "INFO" "Artifact file missing, skipping: $rel"
-        fi
-    done
+    local checkpoint_dir="$1"
+    
+    # Upload all files from the checkpoint directory recursively
+    if [[ -d "$checkpoint_dir" ]]; then
+        while IFS= read -r -d '' file; do
+            printf '%s\0' "$file"
+        done < <(find "$checkpoint_dir" -type f -print0)
+    else
+        log "ERROR" "Checkpoint directory not found: $checkpoint_dir"
+        return 1
+    fi
 }
 
 # Check if required environment variables are set
@@ -310,24 +303,25 @@ upload_file_to_s3() {
 }
 
 # Upload selected artifacts to S3
-upload_selected_artifacts() {
-    local source_dir="$1"
+upload_checkpoint_to_s3() {
+    local checkpoint_dir="$1"
     local s3_prefix="$2"
     local failed_files=()
     local uploaded_count=0
 
-    log "INFO" "Uploading selected artifacts from $source_dir -> s3://$S3_BUCKET/$s3_prefix"
+    log "INFO" "Uploading checkpoint from $checkpoint_dir -> s3://$S3_BUCKET/$s3_prefix"
 
     : > "$MANIFEST_FILE"
 
     while IFS= read -r -d '' file; do
-        # Verify file still exists (could have been deleted between enumeration and upload)
+        # Verify file still exists
         if [[ ! -f "$file" ]]; then
             log "WARN" "File disappeared before upload, skipping: $file"
             continue
         fi
         
-        local relative_path="${file#$source_dir/}"
+        # Calculate relative path from checkpoint directory
+        local relative_path="${file#$checkpoint_dir/}"
         if [[ "$relative_path" == "$file" ]]; then
             relative_path="$(basename "$file")"
         fi
@@ -343,7 +337,7 @@ upload_selected_artifacts() {
         else
             failed_files+=("$relative_path")
         fi
-    done < <(enumerate_artifacts "$source_dir")
+    done < <(enumerate_artifacts "$checkpoint_dir")
 
     if [[ ${#failed_files[@]} -ne 0 ]]; then
         log "ERROR" "Failed to upload ${#failed_files[@]} artifacts: ${failed_files[*]}"
@@ -352,11 +346,11 @@ upload_selected_artifacts() {
     fi
 
     if [[ $uploaded_count -eq 0 ]]; then
-        log "WARN" "No artifacts matched the selection; skipping artifact upload"
+        log "WARN" "No artifacts found in checkpoint; skipping upload"
         return 0
     fi
 
-    log "INFO" "Uploaded $uploaded_count artifact files"
+    log "INFO" "Uploaded $uploaded_count checkpoint files"
     return 0
 }
 
@@ -461,29 +455,38 @@ finalize() {
         return 0
     fi
     
-    # Find DXNN directory and artifacts
-    local dxnn_dir="/home/ubuntu/dxnn-trader"
-    if [[ ! -d "$dxnn_dir" ]]; then
-        dxnn_dir="/opt/dxnn"
-    fi
+    # Find latest checkpoint directory
+    log "INFO" "Looking for latest checkpoint in $CHECKPOINT_BASE_DIR"
     
-    if [[ ! -d "$dxnn_dir" ]]; then
-        log "ERROR" "DXNN directory not found. Checked: /home/ubuntu/dxnn-trader and /opt/dxnn"
-        log "INFO" "Available directories in /home/ubuntu: $(ls -la /home/ubuntu/ 2>/dev/null || echo 'Permission denied')"
+    local checkpoint_dirs
+    checkpoint_dirs=$(find "$CHECKPOINT_BASE_DIR" -maxdepth 1 -type d -name "checkpoint-*" 2>/dev/null | sort -r)
+    
+    if [[ -z "$checkpoint_dirs" ]]; then
+        log "ERROR" "No checkpoint directories found in $CHECKPOINT_BASE_DIR"
+        log "INFO" "Available directories: $(ls -la $CHECKPOINT_BASE_DIR 2>/dev/null || echo 'Permission denied')"
         return 1
     fi
     
-    log "INFO" "Using DXNN directory: $dxnn_dir"
+    # Get the latest checkpoint (first in reverse sorted list)
+    local latest_checkpoint
+    latest_checkpoint=$(echo "$checkpoint_dirs" | head -n 1)
     
-    # Upload artifacts
+    log "INFO" "Using latest checkpoint: $latest_checkpoint"
+    
+    # Verify checkpoint has required marker file
+    if [[ ! -f "$latest_checkpoint/_CHECKPOINT_INFO" ]]; then
+        log "WARN" "Checkpoint missing _CHECKPOINT_INFO marker, but proceeding anyway"
+    fi
+    
+    # Upload checkpoint to S3
     local s3_prefix="$S3_PREFIX/$JOB_ID/$RUN_ID"
-    if upload_selected_artifacts "$dxnn_dir" "$s3_prefix"; then
-        # Upload logs
+    if upload_checkpoint_to_s3 "$latest_checkpoint" "$s3_prefix"; then
+        # Upload main log file (not in checkpoint)
         if [[ -f "$LOG_FILE" ]]; then
             upload_file_to_s3 "$LOG_FILE" "$s3_prefix/dxnn-run.log" || true
         fi
 
-        # Upload manifest (includes files copied from directory upload)
+        # Upload manifest
         if ! upload_manifest; then
             log "ERROR" "FINALIZE_FAILED - Manifest upload failed"
             create_failure_sentinel
@@ -493,7 +496,7 @@ finalize() {
         # Create success sentinel
         if create_s3_sentinel "success"; then
             update_latest_pointer
-            log "INFO" "FINALIZE_SUCCESS - All artifacts uploaded"
+            log "INFO" "FINALIZE_SUCCESS - Checkpoint uploaded to s3://$S3_BUCKET/$s3_prefix"
             return 0
         else
             log "ERROR" "FINALIZE_FAILED - Sentinel creation failed"
