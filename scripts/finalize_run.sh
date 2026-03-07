@@ -25,7 +25,7 @@ load_dxnn_config
 
 # Configuration
 AWS_CLI_BIN="${AWS_CLI_BIN:-aws}"
-LOCK_FILE="/var/lock/dxnn.finalize.lock"
+LOCK_FILE="/tmp/dxnn.finalize.lock"
 LOG_FILE="/var/log/dxnn-run.log"
 COMPLETION_STATUS="${COMPLETION_STATUS:-unknown}"
 EXIT_CODE="${EXIT_CODE:-1}"
@@ -38,7 +38,7 @@ dxnn_assign_default POPULATION_ID "${POPULATION_ID:-}" ""
 dxnn_assign_default LINEAGE_ID "" ""
 
 # Extract lineage_id from population_id if not provided
-# Format: 2025-02-11T15-30-45Z_a3f9_run1 -> a3f9
+# Format: 2025-02-11T15-30-45Z_a3f9_run1 -> a3f9 (just the 4-char code)
 if [[ -z "$LINEAGE_ID" && -n "$POPULATION_ID" ]]; then
     LINEAGE_ID=$(echo "$POPULATION_ID" | awk -F'_' '{print $2}')
 fi
@@ -70,6 +70,13 @@ if [[ -n "$AWS_REGION_HINT" ]]; then
 fi
 AWS_CLI_INSTALL_DIR="${AWS_CLI_INSTALL_DIR:-/usr/local/aws-cli}"
 AWS_CLI_BIN_DIR="${AWS_CLI_BIN_DIR:-/usr/local/bin}"
+
+# Logging function with UTC timestamps
+log() {
+    local level="$1"
+    shift
+    echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] $level: $*" | tee -a "$LOG_FILE"
+}
 
 # Ensure AWS CLI is present before doing any work
 run_privileged() {
@@ -238,13 +245,6 @@ resolve_auto_terminate() {
 # Retry configuration
 MAX_RETRIES=7
 RETRY_DELAYS=(1 2 4 8 16 32 64)
-
-# Logging function with UTC timestamps
-log() {
-    local level="$1"
-    shift
-    echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] $level: $*" | tee -a "$LOG_FILE"
-}
 
 enumerate_artifacts() {
     local checkpoint_dir="$1"
@@ -470,32 +470,36 @@ finalize() {
         return 0
     fi
     
-    # Find latest checkpoint directory
-    log "INFO" "Looking for latest checkpoint in $CHECKPOINT_BASE_DIR"
+    # Find latest checkpoint directory OR use DXNN directory directly for manual uploads
+    log "INFO" "Looking for checkpoint in $CHECKPOINT_BASE_DIR or using direct upload"
     
     local checkpoint_dirs
     checkpoint_dirs=$(find "$CHECKPOINT_BASE_DIR" -maxdepth 1 -type d -name "checkpoint-*" 2>/dev/null | sort -r)
     
-    if [[ -z "$checkpoint_dirs" ]]; then
-        log "ERROR" "No checkpoint directories found in $CHECKPOINT_BASE_DIR"
-        log "INFO" "Available directories: $(ls -la $CHECKPOINT_BASE_DIR 2>/dev/null || echo 'Permission denied')"
+    local source_dir
+    if [[ -n "$checkpoint_dirs" ]]; then
+        # Use latest checkpoint
+        source_dir=$(echo "$checkpoint_dirs" | head -n 1)
+        log "INFO" "Using latest checkpoint: $source_dir"
+    else
+        # No checkpoint - upload directly from DXNN directory
+        source_dir="/home/ubuntu/dxnn-trader"
+        log "INFO" "No checkpoint found - uploading directly from $source_dir"
+    fi
+    
+    # Verify source has Mnesia directory (check both standard and distributed node names)
+    if [[ -d "$source_dir/Mnesia.nonode@nohost" ]]; then
+        log "INFO" "Found Mnesia directory: Mnesia.nonode@nohost"
+    elif ls -d "$source_dir"/Mnesia.* >/dev/null 2>&1; then
+        log "INFO" "Found Mnesia directory: $(ls -d "$source_dir"/Mnesia.* | head -1)"
+    else
+        log "ERROR" "No Mnesia directory found in $source_dir"
         return 1
     fi
     
-    # Get the latest checkpoint (first in reverse sorted list)
-    local latest_checkpoint
-    latest_checkpoint=$(echo "$checkpoint_dirs" | head -n 1)
-    
-    log "INFO" "Using latest checkpoint: $latest_checkpoint"
-    
-    # Verify checkpoint has required marker file
-    if [[ ! -f "$latest_checkpoint/_CHECKPOINT_INFO" ]]; then
-        log "WARN" "Checkpoint missing _CHECKPOINT_INFO marker, but proceeding anyway"
-    fi
-    
-    # Upload checkpoint to S3
+    # Upload to S3
     local s3_prefix="$S3_PREFIX/$LINEAGE_ID/$POPULATION_ID"
-    if upload_checkpoint_to_s3 "$latest_checkpoint" "$s3_prefix"; then
+    if upload_checkpoint_to_s3 "$source_dir" "$s3_prefix"; then
         # Upload main log file (not in checkpoint)
         if [[ -f "$LOG_FILE" ]]; then
             upload_file_to_s3 "$LOG_FILE" "$s3_prefix/dxnn-run.log" || true

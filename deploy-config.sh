@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-# Deploy config.erl and manage GitHub versions on DXNN instances
+# Deploy files and manage GitHub versions on DXNN instances
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -29,7 +29,7 @@ REQUIRED:
     -h, --host HOST         Instance hostname or IP
 
 OPTIONS:
-    -c, --config FILE       config.erl file to upload
+    -c, --config FILE...    One or more files to upload (optional)
     -b, --branch BRANCH     Git branch/tag to checkout
     -u, --user USER         SSH user (default: ubuntu)
     -s, --start             Start DXNN after deployment
@@ -37,13 +37,19 @@ OPTIONS:
     --dry-run               Show what would be done without executing
 
 EXAMPLES:
-    # Deploy config only
+    # Pull latest GitHub and compile (no file upload)
+    $0 -i output/key.pem -h 54.123.45.67 -b main
+
+    # Deploy single config file
     $0 -i output/key.pem -h 54.123.45.67 -c ~/config.erl
 
-    # Deploy config and switch to branch
+    # Deploy multiple files
+    $0 -i output/key.pem -h 54.123.45.67 -c ~/config.erl ~/custom.hrl ~/data.txt
+
+    # Deploy files and switch branch
     $0 -i output/key.pem -h 54.123.45.67 -c ~/config.erl -b feature/new-strategy
 
-    # Switch branch and start training
+    # Switch branch and start training (no files)
     $0 -i output/key.pem -h 54.123.45.67 -b v2.1.0 --start
 
 EOF
@@ -52,7 +58,7 @@ EOF
 # Parse arguments
 SSH_KEY=""
 HOST=""
-CONFIG_FILE=""
+CONFIG_FILES=()
 GIT_BRANCH=""
 SSH_USER="ubuntu"
 START_DXNN=false
@@ -63,7 +69,14 @@ while [[ $# -gt 0 ]]; do
     case $1 in
         -i|--key) SSH_KEY="$2"; shift 2 ;;
         -h|--host) HOST="$2"; shift 2 ;;
-        -c|--config) CONFIG_FILE="$2"; shift 2 ;;
+        -c|--config) 
+            shift
+            # Collect all files until next flag
+            while [[ $# -gt 0 && ! "$1" =~ ^- ]]; do
+                CONFIG_FILES+=("$1")
+                shift
+            done
+            ;;
         -b|--branch) GIT_BRANCH="$2"; shift 2 ;;
         -u|--user) SSH_USER="$2"; shift 2 ;;
         -s|--start) START_DXNN=true; shift ;;
@@ -89,9 +102,14 @@ fi
 # Ensure correct permissions on SSH key
 chmod 600 "$SSH_KEY" 2>/dev/null || true
 
-if [[ -n "$CONFIG_FILE" && ! -f "$CONFIG_FILE" ]]; then
-    log_error "Config file not found: $CONFIG_FILE"
-    exit 1
+# Validate config files if provided
+if [[ ${#CONFIG_FILES[@]} -gt 0 ]]; then
+    for config_file in "${CONFIG_FILES[@]}"; do
+        if [[ ! -f "$config_file" ]]; then
+            log_error "File not found: $config_file"
+            exit 1
+        fi
+    done
 fi
 
 # SSH command wrapper
@@ -147,43 +165,64 @@ while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
     fi
 done
 
-# Upload config.erl if provided
-if [[ -n "$CONFIG_FILE" ]]; then
-    log_info "Uploading config.erl..."
+# Upload files if provided
+if [[ ${#CONFIG_FILES[@]} -gt 0 ]]; then
+    log_info "Uploading ${#CONFIG_FILES[@]} file(s)..."
     
-    # Validate config locally first
-    if [[ "$COMPILE" == "true" && "$DRY_RUN" == "false" ]]; then
-        log_info "Validating config.erl syntax..."
-        if command -v erlc >/dev/null 2>&1; then
-            if ! erlc -o /tmp "$CONFIG_FILE" 2>/dev/null; then
-                log_error "Config file has syntax errors"
-                exit 1
+    for config_file in "${CONFIG_FILES[@]}"; do
+        filename=$(basename "$config_file")
+        log_info "  Uploading: $filename"
+        
+        # Validate .erl files locally first
+        if [[ "$filename" == *.erl && "$COMPILE" == "true" && "$DRY_RUN" == "false" ]]; then
+            if command -v erlc >/dev/null 2>&1; then
+                if ! erlc -o /tmp "$config_file" 2>/dev/null; then
+                    log_error "File has syntax errors: $filename"
+                    exit 1
+                fi
+                rm -f /tmp/$(basename "$filename" .erl).beam
+                log_success "  Syntax valid: $filename"
             fi
-            rm -f /tmp/config.beam
-            log_success "Config syntax valid"
-        else
-            log_warning "erlc not found locally, skipping validation"
         fi
-    fi
+        
+        # Upload atomically
+        scp_upload "$config_file" "/tmp/${filename}.tmp"
+        ssh_exec "mv /tmp/${filename}.tmp /home/ubuntu/dxnn-trader/${filename}"
+        log_success "  Uploaded: $filename"
+    done
     
-    # Upload atomically
-    scp_upload "$CONFIG_FILE" "/tmp/config.erl.tmp"
-    ssh_exec "mv /tmp/config.erl.tmp /home/ubuntu/dxnn-trader/config.erl"
+    log_success "All files uploaded"
     
-    log_success "Config uploaded"
-    
-    # Compile on remote
+    # Compile .erl files on remote
     if [[ "$COMPILE" == "true" ]]; then
-        log_info "Compiling config.erl on instance..."
-        if ssh_exec "cd /home/ubuntu/dxnn-trader && erlc config.erl 2>&1"; then
-            log_success "Config compiled successfully"
-        else
-            log_error "Config compilation failed"
-            log_info "Attempting to view compilation errors..."
-            ssh_exec "cd /home/ubuntu/dxnn-trader && erlc config.erl" 2>&1 || true
-            exit 1
+        erl_count=0
+        for config_file in "${CONFIG_FILES[@]}"; do
+            filename=$(basename "$config_file")
+            if [[ "$filename" == *.erl ]]; then
+                ((erl_count++))
+            fi
+        done
+        
+        if [[ $erl_count -gt 0 ]]; then
+            log_info "Compiling $erl_count .erl file(s) on instance..."
+            for config_file in "${CONFIG_FILES[@]}"; do
+                filename=$(basename "$config_file")
+                if [[ "$filename" == *.erl ]]; then
+                    log_info "  Compiling: $filename"
+                    if ssh_exec "cd /home/ubuntu/dxnn-trader && erlc $filename 2>&1"; then
+                        log_success "  Compiled: $filename"
+                    else
+                        log_error "Compilation failed: $filename"
+                        ssh_exec "cd /home/ubuntu/dxnn-trader && erlc $filename" 2>&1 || true
+                        exit 1
+                    fi
+                fi
+            done
+            log_success "All .erl files compiled"
         fi
     fi
+else
+    log_info "No files to upload - will use GitHub code only"
 fi
 
 # Switch Git branch if provided
@@ -194,7 +233,7 @@ if [[ -n "$GIT_BRANCH" ]]; then
 set -e
 cd /home/ubuntu/dxnn-trader
 
-# Stash any local changes (especially config.erl)
+# Stash any local changes
 if ! git diff-index --quiet HEAD --; then
     echo "Stashing local changes..."
     git stash push -m "Auto-stash before deploy-config.sh pull at \$(date)"
@@ -343,8 +382,13 @@ fi
 echo ""
 log_success "Deployment complete!"
 echo ""
-if [[ -n "$CONFIG_FILE" ]]; then
-    echo "  Config: Uploaded and compiled"
+if [[ ${#CONFIG_FILES[@]} -gt 0 ]]; then
+    echo "  Files: ${#CONFIG_FILES[@]} uploaded and compiled"
+    for config_file in "${CONFIG_FILES[@]}"; do
+        echo "    - $(basename "$config_file")"
+    done
+else
+    echo "  Files: None (using GitHub code only)"
 fi
 if [[ -n "$GIT_BRANCH" ]]; then
     echo "  Branch: $GIT_BRANCH"

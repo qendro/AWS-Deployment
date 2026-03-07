@@ -1,21 +1,33 @@
 #!/bin/bash
 set -euo pipefail
 
-ERLANG_NODE="dxnn@127.0.0.1"
-ERLANG_COOKIE_FILE="/var/lib/dxnn/.erlang.cookie"
+DXNN_DIR="/home/ubuntu/dxnn-trader"
 
 checkpoint() {
-    # Send checkpoint command to the running tmux session as ubuntu user (without exit)
-    if ! sudo -u ubuntu tmux send-keys -t trader 'exp_runner:checkpoint().' Enter; then
-        echo "Failed to send checkpoint command to tmux"
-        exit 10
-    fi
-    
-    # Wait for checkpoint to complete
-    sleep 5
-    
-    echo "Checkpoint command sent successfully"
+    echo "Manual checkpoint - files will be uploaded directly from $DXNN_DIR"
+    echo "Checkpoint ready for S3 upload"
     exit 0
+}
+
+upload_to_s3() {
+    # Trigger S3 upload directly from filesystem (no checkpoint needed)
+    echo "Triggering S3 upload from $DXNN_DIR"
+    
+    # Set environment variables for finalize script
+    export COMPLETION_STATUS="manual"
+    export EXIT_CODE="0"
+    export POPULATION_ID="${POPULATION_ID:-manual_upload}"
+    export LINEAGE_ID="${LINEAGE_ID:-manual}"
+    
+    # Call finalize script which will upload directly
+    if [[ -x /usr/local/bin/finalize_run.sh ]]; then
+        /usr/local/bin/finalize_run.sh
+        echo "S3 upload completed"
+        exit 0
+    else
+        echo "Error: finalize_run.sh not found"
+        exit 1
+    fi
 }
 
 restore() {
@@ -34,6 +46,7 @@ restore() {
 
 case "${1:-}" in
     checkpoint) checkpoint ;;
+    upload) upload_to_s3 ;;
     restore) restore ;;
-    *) echo "Usage: $0 {checkpoint|restore}" >&2; exit 1 ;;
+    *) echo "Usage: $0 {checkpoint|upload|restore}" >&2; exit 1 ;;
 esac

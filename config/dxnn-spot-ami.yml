@@ -4,7 +4,7 @@ metadata:
   version: "2.0"
 
 aws:
-  instance_type: "m5.large"  # Production: 16 vCPU, 32GB RAM (use t2.medium for testing only)
+  instance_type: "m5.large"  # "c7i.4xlarge", "c5.large", "t3.medium", "t2.medium", "m5.large"
   market_type: "spot"
   spot_max_price: "0.38"
   region: "us-east-1"

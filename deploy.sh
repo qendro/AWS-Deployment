@@ -761,6 +761,7 @@ main() {
         # S3 will be used only for checkpoint storage
         log_info "S3 folder structure:"
         log_info "  s3://$S3_BUCKET/$S3_PREFIX/<lineage_id>/<population_id>/ (checkpoints & logs)"
+        log_info "  Example: s3://$S3_BUCKET/$S3_PREFIX/p08s/2026-03-04T01:33:22Z_p08s_run1/"
     fi
     
     launch_instance

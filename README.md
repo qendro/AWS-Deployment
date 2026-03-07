@@ -33,10 +33,18 @@ Deploy DXNN neural network training on AWS spot instances with automatic interru
 
 **5. Deploy Config & Start Training**
 ```bash
+# Option 1: Deploy with custom files
 ./deploy-config.sh \
     -i output/aws-deployment-key-TIMESTAMP-key.pem \
     -h PUBLIC_IP \
-    -c /path/to/your/config.erl \
+    -c /path/to/config.erl /path/to/custom.hrl \
+    -b main \
+    --start
+
+# Option 2: Deploy without files (GitHub code only)
+./deploy-config.sh \
+    -i output/aws-deployment-key-TIMESTAMP-key.pem \
+    -h PUBLIC_IP \
     -b main \
     --start
 ```
@@ -107,9 +115,17 @@ tmux attach -t trader    # Detach: Ctrl+b d
 
 ### Configuration Deployment
 ```bash
-./deploy-config.sh -i key.pem -h IP -c config.erl  # Upload config
-./deploy-config.sh -i key.pem -h IP -b v2.1.0      # Switch branch
-./deploy-config.sh -i key.pem -h IP -c config.erl -b main --start  # Full deployment
+# Deploy multiple files
+./deploy-config.sh -i key.pem -h IP -c config.erl custom.hrl data.txt
+
+# Deploy without files (GitHub only)
+./deploy-config.sh -i key.pem -h IP -b main --start
+
+# Switch branch only
+./deploy-config.sh -i key.pem -h IP -b v2.1.0
+
+# Deploy single file and start
+./deploy-config.sh -i key.pem -h IP -c config.erl -b main --start
 ```
 
 ## 📊 Monitoring Commands
@@ -133,10 +149,13 @@ Available in config/:
 
 - **Interruption Monitoring** - 2-second polling via IMDSv2
 - **Graceful Shutdown** - 60-second checkpoint deadline
-- **S3 Integration** - No AWS CLI needed, uses AWS Signature v4
+- **S3 Integration** - Automatic upload on completion or interruption
 - **Lineage-Based Paths** - `s3://bucket/prefix/lineage_id/population_id/`
 - **Metadata Tracking** - Full checkpoint metadata with lineage tracking
 - **Single-Shot Protection** - Prevents duplicate interruption handling
+- **Population ID Format** - `<timestamp>_<lineage_code>_run<N>` (e.g., `2026-03-04T01:33:22Z_p08s_run1`)
+- **Lineage ID Format** - `<4-char code>` (e.g., `p08s`)
+- **S3 Path Structure** - `s3://bucket/prefix/<lineage_id>/<population_id>/` (e.g., `s3://dxnn-checkpoints/dxnn-prod/p08s/2026-03-04T01:33:22Z_p08s_run1/`)
 
 ## 🔧 Requirements
 
@@ -266,8 +285,8 @@ cat /var/log/dxnn-setup.log
 # 2. Launch instance
 ./docker-deploy.sh -c config/dxnn-spot-ami.yml
 
-# 3. Deploy config and start
-./deploy-config.sh -i output/key.pem -h IP -c ~/my-config.erl -b main --start
+# 3. Deploy files and start
+./deploy-config.sh -i output/key.pem -h IP -c ~/my-config.erl ~/custom.hrl -b main --start
 
 # 4. Monitor
 ssh -i output/key.pem ubuntu@IP
@@ -285,7 +304,7 @@ tmux attach -t trader
 # Deploy different configs
 ./deploy-config.sh -i key1.pem -h IP1 -c config-sharpe.erl -b main --start
 ./deploy-config.sh -i key2.pem -h IP2 -c config-sortino.erl -b main --start
-./deploy-config.sh -i key3.pem -h IP3 -c config-calmar.erl -b feature/test --start
+./deploy-config.sh -i key3.pem -h IP3 -b feature/test --start  # No custom files
 ```
 
 ### Remote Erlang Shell Access
@@ -309,8 +328,11 @@ erl -name debug@127.0.0.1 -setcookie $(cat ~/.erlang.cookie) -remsh dxnn@$HOSTNA
 ### Update Running Instance
 
 ```bash
-# Update config without restart
-./deploy-config.sh -i output/key.pem -h IP -c new-config.erl
+# Update multiple files without restart
+./deploy-config.sh -i output/key.pem -h IP -c new-config.erl custom.hrl
+
+# Update without files (GitHub only)
+./deploy-config.sh -i output/key.pem -h IP -b main
 
 # Switch to new branch and restart
 ./deploy-config.sh -i output/key.pem -h IP -b v2.2.0 --start

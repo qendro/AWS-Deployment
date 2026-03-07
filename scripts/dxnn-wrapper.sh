@@ -73,21 +73,27 @@ cleanup() {
 trap cleanup TERM INT
 
 create_tmux_runner() {
-    cat > "$TMUX_RUNNER_SCRIPT" <<'EOF'
+    cat > "$TMUX_RUNNER_SCRIPT" <<EOF
 #!/bin/bash
 set -euo pipefail
 
+# Export S3 configuration for Erlang process
+export S3_BUCKET="${S3_BUCKET}"
+export S3_PREFIX="${S3_PREFIX}"
+export POPULATION_ID="${POPULATION_ID}"
+export RUN_ID="${RUN_ID}"
+
 log_runner() {
-    printf '[%s] INFO: %s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$1" >> "$LOG_FILE"
+    printf '[%s] INFO: %s\n' "\$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "\$1" >> "\$LOG_FILE"
 }
 
 # Extract population_id from Erlang output if available
 extract_population_id() {
-    if [[ -f "$LOG_FILE" ]]; then
+    if [[ -f "\$LOG_FILE" ]]; then
         # Look for population_id in logs (format: population_id=<<"2025-02-11T15-30-45Z_a3f9_run1">>)
-        local pop_id=$(grep -oP 'population_id=<<"\K[^"]+' "$LOG_FILE" 2>/dev/null | tail -1)
-        if [[ -n "$pop_id" ]]; then
-            echo "$pop_id"
+        local pop_id=\$(grep -oP 'population_id=<<"\K[^"]+' "\$LOG_FILE" 2>/dev/null | tail -1)
+        if [[ -n "\$pop_id" ]]; then
+            echo "\$pop_id"
             return 0
         fi
     fi
@@ -95,34 +101,35 @@ extract_population_id() {
 }
 
 log_runner "TMUX_SESSION_START - Starting DXNN training"
-cd "$DXNN_DIR"
+log_runner "S3 Config: S3_BUCKET=\$S3_BUCKET S3_PREFIX=\$S3_PREFIX"
+cd "\$DXNN_DIR"
 
 # Get Erlang cookie for distributed access
 ERLANG_COOKIE=""
 if [[ -f "/var/lib/dxnn/.erlang.cookie" ]]; then
-    ERLANG_COOKIE=$(cat /var/lib/dxnn/.erlang.cookie)
+    ERLANG_COOKIE=\$(cat /var/lib/dxnn/.erlang.cookie)
 fi
 
 # Get hostname for node name
-HOSTNAME=$(hostname -f 2>/dev/null || hostname)
+HOSTNAME=\$(hostname -f 2>/dev/null || hostname)
 
 # Start with distributed Erlang enabled for remote shell access
 # Use -name for fully qualified names, -setcookie for authentication
-if [[ -n "$ERLANG_COOKIE" ]]; then
-    log_runner "Starting with distributed Erlang: dxnn@$HOSTNAME"
-    erl -name "dxnn@$HOSTNAME" \
-        -setcookie "$ERLANG_COOKIE" \
-        -noshell \
+if [[ -n "\$ERLANG_COOKIE" ]]; then
+    log_runner "Starting with distributed Erlang: dxnn@\$HOSTNAME"
+    erl -name "dxnn@\$HOSTNAME" \\
+        -setcookie "\$ERLANG_COOKIE" \\
+        -noshell \\
         -eval "launcher:start()"
 else
     log_runner "Starting without distributed Erlang (no cookie found)"
     erl -noshell -eval "launcher:start()"
 fi
 
-exit_code=$?
-log_runner "TMUX_SESSION_END - DXNN exited with code $exit_code"
-echo "$exit_code" > "$SESSION_EXIT_CODE_FILE"
-exit "$exit_code"
+exit_code=\$?
+log_runner "TMUX_SESSION_END - DXNN exited with code \$exit_code"
+echo "\$exit_code" > "\$SESSION_EXIT_CODE_FILE"
+exit "\$exit_code"
 EOF
     chmod +x "$TMUX_RUNNER_SCRIPT"
 }
@@ -166,7 +173,7 @@ run_dxnn() {
     POPULATION_ID=$(extract_population_id)
     export POPULATION_ID
     
-    # Extract lineage_id from population_id
+    # Extract lineage_id from population_id (just the 4-char code)
     if [[ "$POPULATION_ID" != "unknown" ]]; then
         LINEAGE_ID=$(echo "$POPULATION_ID" | awk -F'_' '{print $2}')
         export LINEAGE_ID

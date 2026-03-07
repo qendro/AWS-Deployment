@@ -39,7 +39,7 @@ dxnn_finalize_bool USE_REBALANCE "${DXNN_CFG_USE_REBALANCE:-false}"
 
 CHECKPOINT_DIR="/var/lib/dxnn/checkpoints"
 LOG_FILE="/var/log/spot-watch.log"
-LOCK_FILE="/run/dxnn_spot_triggered"
+LOCK_FILE="/tmp/dxnn_spot_triggered"
 
 # IMDSv2
 IMDS="http://169.254.169.254"
