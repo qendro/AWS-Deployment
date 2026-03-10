@@ -152,10 +152,12 @@ Available in config/:
 - **S3 Integration** - Automatic upload on completion or interruption
 - **Lineage-Based Paths** - `s3://bucket/prefix/lineage_id/population_id/`
 - **Metadata Tracking** - Full checkpoint metadata with lineage tracking
+- **Run Bundle Uploads** - Uploads `Mnesia.nonode@nohost/`, `logs/`, optional `analytics/`, plus `_SUCCESS` and `_MANIFEST`
 - **Single-Shot Protection** - Prevents duplicate interruption handling
 - **Population ID Format** - `<timestamp>_<lineage_code>_run<N>` (e.g., `2026-03-04T01:33:22Z_p08s_run1`)
 - **Lineage ID Format** - `<4-char code>` (e.g., `p08s`)
 - **S3 Path Structure** - `s3://bucket/prefix/<lineage_id>/<population_id>/` (e.g., `s3://dxnn-checkpoints/dxnn-prod/p08s/2026-03-04T01:33:22Z_p08s_run1/`)
+- **Dashboard Compatibility** - `DXNN-Dashboard` can load the run root directly and browse artifacts after load
 
 ## 🔧 Requirements
 
