@@ -185,7 +185,10 @@ ssh -i output/your-key.pem ubuntu@PUBLIC_IP        # Connect to instance
 sudo systemctl status spot-watch                   # Check spot watcher
 sudo tail -f /var/log/spot-watch.log              # View spot logs
 sudo cloud-init status                            # Check setup status
+sudo grep -E "^AUTO_TERMINATE(_DEFAULT)?=" /etc/dxnn-env   # Verify auto-terminate setting
 ```
+
+`auto_terminate` only powers off after a successful DXNN completion (`COMPLETION_STATUS=normal`, `EXIT_CODE=0`). Failed or interrupted runs stay up for debugging.
 
 ### S3 Issues
 ```bash

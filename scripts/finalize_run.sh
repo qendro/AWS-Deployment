@@ -43,12 +43,6 @@ if [[ -z "$LINEAGE_ID" && -n "$POPULATION_ID" ]]; then
     LINEAGE_ID=$(echo "$POPULATION_ID" | awk -F'_' '{print $2}')
 fi
 
-# If still no lineage_id, we cannot proceed
-if [[ -z "$LINEAGE_ID" ]]; then
-    log "ERROR" "LINEAGE_ID could not be determined from POPULATION_ID=$POPULATION_ID"
-    exit 1
-fi
-
 # Artifacts to capture - now from checkpoint directory
 # The checkpoint directory contains:
 #   - Mnesia.nonode@nohost/ (full database)
@@ -77,6 +71,12 @@ log() {
     shift
     echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] $level: $*" | tee -a "$LOG_FILE"
 }
+
+# If still no lineage_id, we cannot proceed
+if [[ -z "$LINEAGE_ID" ]]; then
+    log "ERROR" "LINEAGE_ID could not be determined from POPULATION_ID=$POPULATION_ID"
+    exit 1
+fi
 
 # Ensure AWS CLI is present before doing any work
 run_privileged() {
@@ -233,11 +233,8 @@ resolve_auto_terminate() {
             echo "false"
             ;;
         *)
-            if [[ "${SAFE_MODE:-}" == "true" ]]; then
-                echo "false"
-            else
-                echo "true"
-            fi
+            # Fail-safe: never terminate on malformed values.
+            echo "false"
             ;;
     esac
 }
@@ -371,6 +368,25 @@ create_s3_sentinel() {
     local status="$1"
     local sentinel_file="/tmp/_SUCCESS"
     local s3_key="$S3_PREFIX/$LINEAGE_ID/$POPULATION_ID/_SUCCESS"
+    local completion_reason
+
+    case "$COMPLETION_STATUS" in
+        normal)
+            completion_reason="training_completed"
+            ;;
+        interrupted)
+            completion_reason="spot_interruption"
+            ;;
+        failed)
+            completion_reason="training_failed"
+            ;;
+        incremental)
+            completion_reason="incremental_upload"
+            ;;
+        *)
+            completion_reason="unknown"
+            ;;
+    esac
     
     # Create sentinel with metadata
     cat > "$sentinel_file" << EOF
@@ -381,7 +397,7 @@ create_s3_sentinel() {
     "status": "$status",
     "completion_status": "$COMPLETION_STATUS",
     "exit_code": $EXIT_CODE,
-    "reason": "$(if [[ "$COMPLETION_STATUS" == "normal" ]]; then echo "training_completed"; else echo "spot_interruption"; fi)"
+    "reason": "$completion_reason"
 }
 EOF
     
@@ -533,9 +549,9 @@ finalize() {
 main() {
     # Acquire exclusive lock
     exec 200>"$LOCK_FILE"
-    if ! flock -n 200; then
-        log "INFO" "Another finalization process is running - exiting"
-        exit 0
+    if ! flock -w 600 200; then
+        log "ERROR" "Could not acquire finalization lock within timeout"
+        exit 1
     fi
 
     local finalize_status="success"
@@ -564,6 +580,27 @@ main() {
             return 1
         fi
         return 0
+    fi
+
+    if [[ "$COMPLETION_STATUS" != "normal" ]]; then
+        log "INFO" "AUTO_TERMINATE requested but completion_status=$COMPLETION_STATUS; keeping instance for inspection"
+        if [[ "$finalize_status" == "failure" ]]; then
+            return 1
+        fi
+        return 0
+    fi
+
+    if [[ "$EXIT_CODE" != "0" ]]; then
+        log "INFO" "AUTO_TERMINATE requested but exit_code=$EXIT_CODE; keeping instance for inspection"
+        if [[ "$finalize_status" == "failure" ]]; then
+            return 1
+        fi
+        return 0
+    fi
+
+    if [[ "$finalize_status" != "success" ]]; then
+        log "INFO" "AUTO_TERMINATE requested but finalization failed; keeping instance for inspection"
+        return 1
     fi
 
     log "INFO" "AUTO_TERMINATE enabled - powering off instance"

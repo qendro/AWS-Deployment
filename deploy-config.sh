@@ -33,6 +33,7 @@ OPTIONS:
     -b, --branch BRANCH     Git branch/tag to checkout
     -u, --user USER         SSH user (default: ubuntu)
     -s, --start             Start DXNN after deployment
+    --auto-terminate        Auto-terminate instance on successful completion
     --no-compile            Skip Erlang compilation
     --dry-run               Show what would be done without executing
 
@@ -52,6 +53,9 @@ EXAMPLES:
     # Switch branch and start training (no files)
     $0 -i output/key.pem -h 54.123.45.67 -b v2.1.0 --start
 
+    # Deploy with auto-terminate on successful completion
+    $0 -i output/key.pem -h 54.123.45.67 -c ~/config.erl -b main --start --auto-terminate
+
 EOF
 }
 
@@ -62,6 +66,7 @@ CONFIG_FILES=()
 GIT_BRANCH=""
 SSH_USER="ubuntu"
 START_DXNN=false
+AUTO_TERMINATE=false
 COMPILE=true
 DRY_RUN=false
 
@@ -80,6 +85,7 @@ while [[ $# -gt 0 ]]; do
         -b|--branch) GIT_BRANCH="$2"; shift 2 ;;
         -u|--user) SSH_USER="$2"; shift 2 ;;
         -s|--start) START_DXNN=true; shift ;;
+        --auto-terminate) AUTO_TERMINATE=true; shift ;;
         --no-compile) COMPILE=false; shift ;;
         --dry-run) DRY_RUN=true; shift ;;
         --help) show_help; exit 0 ;;
@@ -101,16 +107,6 @@ fi
 
 # Ensure correct permissions on SSH key
 chmod 600 "$SSH_KEY" 2>/dev/null || true
-
-# Validate config files if provided
-if [[ ${#CONFIG_FILES[@]} -gt 0 ]]; then
-    for config_file in "${CONFIG_FILES[@]}"; do
-        if [[ ! -f "$config_file" ]]; then
-            log_error "File not found: $config_file"
-            exit 1
-        fi
-    done
-fi
 
 # SSH command wrapper
 ssh_exec() {
@@ -165,71 +161,11 @@ while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
     fi
 done
 
-# Upload files if provided
-if [[ ${#CONFIG_FILES[@]} -gt 0 ]]; then
-    log_info "Uploading ${#CONFIG_FILES[@]} file(s)..."
-    
-    for config_file in "${CONFIG_FILES[@]}"; do
-        filename=$(basename "$config_file")
-        log_info "  Uploading: $filename"
-        
-        # Validate .erl files locally first
-        if [[ "$filename" == *.erl && "$COMPILE" == "true" && "$DRY_RUN" == "false" ]]; then
-            if command -v erlc >/dev/null 2>&1; then
-                if ! erlc -o /tmp "$config_file" 2>/dev/null; then
-                    log_error "File has syntax errors: $filename"
-                    exit 1
-                fi
-                rm -f /tmp/$(basename "$filename" .erl).beam
-                log_success "  Syntax valid: $filename"
-            fi
-        fi
-        
-        # Upload atomically
-        scp_upload "$config_file" "/tmp/${filename}.tmp"
-        ssh_exec "mv /tmp/${filename}.tmp /home/ubuntu/dxnn-trader/${filename}"
-        log_success "  Uploaded: $filename"
-    done
-    
-    log_success "All files uploaded"
-    
-    # Compile .erl files on remote
-    if [[ "$COMPILE" == "true" ]]; then
-        erl_count=0
-        for config_file in "${CONFIG_FILES[@]}"; do
-            filename=$(basename "$config_file")
-            if [[ "$filename" == *.erl ]]; then
-                ((erl_count++))
-            fi
-        done
-        
-        if [[ $erl_count -gt 0 ]]; then
-            log_info "Compiling $erl_count .erl file(s) on instance..."
-            for config_file in "${CONFIG_FILES[@]}"; do
-                filename=$(basename "$config_file")
-                if [[ "$filename" == *.erl ]]; then
-                    log_info "  Compiling: $filename"
-                    if ssh_exec "cd /home/ubuntu/dxnn-trader && erlc $filename 2>&1"; then
-                        log_success "  Compiled: $filename"
-                    else
-                        log_error "Compilation failed: $filename"
-                        ssh_exec "cd /home/ubuntu/dxnn-trader && erlc $filename" 2>&1 || true
-                        exit 1
-                    fi
-                fi
-            done
-            log_success "All .erl files compiled"
-        fi
-    fi
-else
-    log_info "No files to upload - will use GitHub code only"
-fi
+# Pull latest from GitHub (always, regardless of file uploads)
+GIT_BRANCH=${GIT_BRANCH:-"main"}  # Default to main if not specified
+log_info "Pulling latest code from branch: $GIT_BRANCH..."
 
-# Switch Git branch if provided
-if [[ -n "$GIT_BRANCH" ]]; then
-    log_info "Switching to branch/tag: $GIT_BRANCH..."
-    
-    ssh_exec << EOF
+ssh_exec << EOF
 set -e
 cd /home/ubuntu/dxnn-trader
 
@@ -257,19 +193,68 @@ fi
 
 echo "Current commit: \$(git rev-parse --short HEAD)"
 EOF
+
+log_success "Pulled latest from $GIT_BRANCH"
+
+# Upload files if provided (overwrites GitHub files)
+if [[ ${#CONFIG_FILES[@]} -gt 0 ]]; then
+    log_info "Uploading ${#CONFIG_FILES[@]} file(s) to override GitHub versions..."
     
-    log_success "Switched to $GIT_BRANCH"
+    for config_file in "${CONFIG_FILES[@]}"; do
+        filename=$(basename "$config_file")
+        log_info "  Uploading: $filename"
+        
+        # Upload atomically (skip local validation - will validate on remote)
+        scp_upload "$config_file" "/tmp/${filename}.tmp"
+        ssh_exec "mv /tmp/${filename}.tmp /home/ubuntu/dxnn-trader/${filename}"
+        log_success "  Uploaded: $filename"
+    done
     
-    # Recompile after git checkout
+    log_success "All files uploaded"
+    
+    # Compile .erl files on remote
     if [[ "$COMPILE" == "true" ]]; then
-        log_info "Recompiling DXNN after branch switch..."
-        ssh_exec "cd /home/ubuntu/dxnn-trader && rm -f *.beam && erl -noshell -eval 'make:all([load]), init:stop().'" 2>&1 | tail -10
-        if [ $? -eq 0 ]; then
-            log_success "DXNN recompiled"
-        else
-            log_error "DXNN compilation failed"
-            exit 1
+        erl_count=0
+        for config_file in "${CONFIG_FILES[@]}"; do
+            filename=$(basename "$config_file")
+            if [[ "$filename" == *.erl ]]; then
+                erl_count=$((erl_count + 1))
+            fi
+        done
+        
+        if [[ $erl_count -gt 0 ]]; then
+            log_info "Compiling $erl_count .erl file(s) on instance..."
+            for config_file in "${CONFIG_FILES[@]}"; do
+                filename=$(basename "$config_file")
+                if [[ "$filename" == *.erl ]]; then
+                    log_info "  Compiling: $filename"
+                    if ssh_exec "cd /home/ubuntu/dxnn-trader && erlc $filename" 2>&1; then
+                        log_success "  Compiled: $filename"
+                    else
+                        log_error "Compilation failed: $filename"
+                        log_info "Showing compilation errors:"
+                        ssh_exec "cd /home/ubuntu/dxnn-trader && erlc $filename" 2>&1 || true
+                        exit 1
+                    fi
+                fi
+            done
+            log_success "All .erl files compiled"
         fi
+    fi
+else
+    log_info "No files uploaded - using GitHub code only"
+fi
+
+# Compile all DXNN code
+if [[ "$COMPILE" == "true" ]]; then
+    log_info "Compiling all DXNN code..."
+    if compile_output=$(ssh_exec "cd /home/ubuntu/dxnn-trader && rm -f *.beam && erl -noshell -eval 'make:all([load]), init:stop().'" 2>&1); then
+        echo "$compile_output" | tail -10
+        log_success "DXNN compiled successfully"
+    else
+        echo "$compile_output" | tail -50
+        log_error "DXNN compilation failed"
+        exit 1
     fi
 fi
 
@@ -378,6 +363,45 @@ if [[ "$START_DXNN" == "true" ]]; then
     fi
 fi
 
+# Configure auto-terminate (always write explicit true/false to avoid stale state)
+log_info "Configuring auto-terminate setting (AUTO_TERMINATE=$AUTO_TERMINATE)..."
+
+ssh_exec << EOF
+AUTO_TERMINATE_VALUE="$AUTO_TERMINATE"
+
+if [ -f /etc/dxnn-env ]; then
+    sudo sed -i "s/^AUTO_TERMINATE=.*/AUTO_TERMINATE=\$AUTO_TERMINATE_VALUE/" /etc/dxnn-env
+    sudo sed -i "s/^AUTO_TERMINATE_DEFAULT=.*/AUTO_TERMINATE_DEFAULT=\$AUTO_TERMINATE_VALUE/" /etc/dxnn-env
+
+    if ! grep -q "^AUTO_TERMINATE=" /etc/dxnn-env; then
+        echo "AUTO_TERMINATE=\$AUTO_TERMINATE_VALUE" | sudo tee -a /etc/dxnn-env > /dev/null
+    fi
+    if ! grep -q "^AUTO_TERMINATE_DEFAULT=" /etc/dxnn-env; then
+        echo "AUTO_TERMINATE_DEFAULT=\$AUTO_TERMINATE_VALUE" | sudo tee -a /etc/dxnn-env > /dev/null
+    fi
+else
+    sudo bash -c "cat > /etc/dxnn-env" << DXNN_ENV
+AUTO_TERMINATE=\$AUTO_TERMINATE_VALUE
+AUTO_TERMINATE_DEFAULT=\$AUTO_TERMINATE_VALUE
+DXNN_ENV
+fi
+
+echo "Current /etc/dxnn-env contents:"
+sudo grep -E "^AUTO_TERMINATE(_DEFAULT)?=" /etc/dxnn-env || true
+EOF
+
+if [ $? -eq 0 ]; then
+    if [[ "$AUTO_TERMINATE" == "true" ]]; then
+        log_success "Auto-terminate enabled - instance will terminate only after successful completion"
+        log_warning "⚠️  Failures will keep the instance running for debugging"
+    else
+        log_info "Auto-terminate disabled - instance will remain running after completion"
+    fi
+else
+    log_error "Failed to configure auto-terminate"
+    exit 1
+fi
+
 # Summary
 echo ""
 log_success "Deployment complete!"
@@ -397,6 +421,9 @@ if [[ -n "$GIT_BRANCH" ]]; then
 fi
 if [[ "$START_DXNN" == "true" ]]; then
     echo "  Status: Running"
+fi
+if [[ "$AUTO_TERMINATE" == "true" ]]; then
+    echo "  Auto-terminate: ⚠️  ENABLED - instance will terminate on successful completion"
 fi
 echo ""
 log_info "Connect: ssh -i $SSH_KEY ${SSH_USER}@${HOST}"

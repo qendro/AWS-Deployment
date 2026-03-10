@@ -117,10 +117,7 @@ HOSTNAME=\$(hostname -f 2>/dev/null || hostname)
 # Use -name for fully qualified names, -setcookie for authentication
 if [[ -n "\$ERLANG_COOKIE" ]]; then
     log_runner "Starting with distributed Erlang: dxnn@\$HOSTNAME"
-    erl -name "dxnn@\$HOSTNAME" \\
-        -setcookie "\$ERLANG_COOKIE" \\
-        -noshell \\
-        -eval "launcher:start()"
+    erl -name "dxnn@\$HOSTNAME" -setcookie "\$ERLANG_COOKIE" -noshell -eval "launcher:start()"
 else
     log_runner "Starting without distributed Erlang (no cookie found)"
     erl -noshell -eval "launcher:start()"
@@ -190,13 +187,17 @@ finalize() {
     local exit_code="$1"
     local completion_status
     
-    # Determine completion reason based on exit code
+    # Determine completion reason based on exit code.
+    # Spot interruption path uses spot-watch.sh directly and sets COMPLETION_STATUS=interrupted.
     if [[ $exit_code -eq 0 ]]; then
         completion_status="normal"
         log "INFO" "COMPLETION_NORMAL - Training completed successfully, initiating S3 upload"
-    else
+    elif [[ $exit_code -eq 130 || $exit_code -eq 143 ]]; then
         completion_status="interrupted"
         log "INFO" "COMPLETION_INTERRUPTED - Training interrupted (exit code: $exit_code), initiating S3 upload"
+    else
+        completion_status="failed"
+        log "INFO" "COMPLETION_FAILED - Training failed (exit code: $exit_code), initiating S3 upload"
     fi
     
     # Set environment variables for finalizer
@@ -224,20 +225,36 @@ main() {
     
     # Run DXNN and capture exit code
     local exit_code=0
+    local tmux_started=false
     log "INFO" "WRAPPER_EXEC - Launching DXNN process..."
     
     if run_dxnn; then
         exit_code=0
+        tmux_started=true
         log "INFO" "WRAPPER_SUCCESS - DXNN process completed successfully"
     else
         exit_code=$?
         log "WARN" "WRAPPER_ERROR - DXNN process failed with exit code: $exit_code"
+        
+        # Check if tmux session was created (even if it failed later)
+        # If tmux never started, don't finalize (no training data to upload)
+        if [[ ! -f "$SESSION_EXIT_CODE_FILE" ]] && ! tmux has-session -t "$TMUX_SESSION" 2>/dev/null; then
+            log "ERROR" "WRAPPER_ABORT - Tmux session never started, skipping finalization"
+            log "ERROR" "Instance will remain running for debugging"
+            exit 1
+        fi
+        tmux_started=true
     fi
     
     log "INFO" "WRAPPER_FINALIZE - DXNN execution finished, starting finalization process"
     
-    # Call finalizer with outcome
-    finalize "$exit_code"
+    # Call finalizer with outcome (only if tmux actually ran)
+    if [[ "$tmux_started" == "true" ]]; then
+        finalize "$exit_code"
+    else
+        log "ERROR" "WRAPPER_SKIP_FINALIZE - Skipping finalization, no training occurred"
+        exit 1
+    fi
     
     log "INFO" "WRAPPER_END - All operations completed"
 }
