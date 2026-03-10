@@ -4,12 +4,12 @@ metadata:
   version: "2.0"
 
 aws:
-  instance_type: "c7i.4xlarge"  # "c7i.4xlarge", "c5.large", "t3.medium", "t2.medium", "m5.large"
+  instance_type: "m5.large"  # "c7i.4xlarge", "c5.large", "t3.medium", "t2.medium", "m5.large"
   market_type: "spot"
   spot_max_price: "0.38"
   region: "us-east-1"
   availability_zone: "us-east-1a"
-  ami_id: "ami-0c2cdf6900fe482e8"  # Custom DXNN AMI created 2026-03-03
+  ami_id: "ami-0d3a88de604a5cc04"  # Custom DXNN AMI created 2026-03-03
   ssh_user: "ubuntu"
   iam_instance_profile: "DXNN-Spot-Profile"
 
@@ -33,10 +33,8 @@ application:
     - "cp -r /opt/dxnn-trader-base /home/ubuntu/dxnn-trader"
     - "chown -R ubuntu:ubuntu /home/ubuntu/dxnn-trader"
     
-    # Generate unique Erlang cookie for this instance
-    - "echo 'dxnn_prod_$(openssl rand -hex 16)' > /var/lib/dxnn/.erlang.cookie"
-    - "chown ubuntu:ubuntu /var/lib/dxnn/.erlang.cookie"
-    - "chmod 600 /var/lib/dxnn/.erlang.cookie"
+    # Force non-distributed Erlang startup for portable nonode@nohost Mnesia checkpoints
+    - "rm -f /var/lib/dxnn/.erlang.cookie"
     
     # Enable and start spot watcher
     - "systemctl enable spot-watch"

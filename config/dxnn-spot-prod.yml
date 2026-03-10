@@ -58,9 +58,7 @@ application:
         cd /home/ubuntu
         git clone https://github.com/qendro/DXNN-Trader-v2.git dxnn-trader
         chown -R ubuntu:ubuntu /home/ubuntu/dxnn-trader
-        echo "dxnn_prod_$(openssl rand -hex 16)" > /var/lib/dxnn/.erlang.cookie
-        chown ubuntu:ubuntu /var/lib/dxnn/.erlang.cookie
-        chmod 600 /var/lib/dxnn/.erlang.cookie
+        rm -f /var/lib/dxnn/.erlang.cookie
         if [[ -f /tmp/finalize_run.sh ]]; then
           cp /tmp/finalize_run.sh /usr/local/bin/finalize_run.sh
         fi
