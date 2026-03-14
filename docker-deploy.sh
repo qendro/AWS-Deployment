@@ -34,12 +34,17 @@ show_help() {
 }
 
 # Parse arguments
-while getopts "c:sxh" opt; do
-  case ${opt} in
-    c) CONFIG="$OPTARG" ;;
-    s) SHELL_MODE=true ;;
-    x) CLEANUP=true ;;
-    h) show_help ;;
+OVERRIDE_ARGS=()
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -c) CONFIG="$2"; shift 2 ;;
+    -s) SHELL_MODE=true; shift ;;
+    -x) CLEANUP=true; shift ;;
+    -h) show_help ;;
+    --instance-type) OVERRIDE_ARGS+=("-e" "OVERRIDE_INSTANCE_TYPE=$2"); shift 2 ;;
+    --availability-zone) OVERRIDE_ARGS+=("-e" "OVERRIDE_AVAILABILITY_ZONE=$2"); shift 2 ;;
+    --ami-id) OVERRIDE_ARGS+=("-e" "OVERRIDE_AMI_ID=$2"); shift 2 ;;
+    --spot-max-price) OVERRIDE_ARGS+=("-e" "OVERRIDE_SPOT_MAX_PRICE=$2"); shift 2 ;;
     *) show_help ;;
   esac
 done
@@ -94,6 +99,7 @@ MOUNT_PATH="${HOST_AWS_DEPLOYMENT_PATH:-$(pwd)}"
 docker_run_args+=(
     -v "${MOUNT_PATH}:/aws-deployment"
     --env-file .env
+    "${OVERRIDE_ARGS[@]}"
 )
 
 # Shell mode

@@ -2,6 +2,8 @@
 
 This policy should be attached to the IAM role that will be used by spot instances for S3 access and EC2 metadata access.
 
+**Note:** This policy supports multi-region deployments. The S3 bucket can remain in a single region (e.g., us-east-1) and instances in any region can access it.
+
 ```json
 {
   "Version": "2012-10-17",
@@ -25,9 +27,31 @@ This policy should be attached to the IAM role that will be used by spot instanc
       "Action": [
         "ec2:DescribeSpotInstanceRequests",
         "ec2:DescribeInstances",
-        "ec2:DescribeInstanceStatus"
+        "ec2:DescribeInstanceStatus",
+        "ec2:DescribeRegions",
+        "ec2:DescribeAvailabilityZones"
       ],
       "Resource": "*"
+    },
+    {
+      "Sid": "AMIManagementMultiRegion",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeImages",
+        "ec2:CopyImage",
+        "ec2:CreateTags"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": [
+            "us-east-1",
+            "us-west-2",
+            "eu-west-1",
+            "ap-southeast-1"
+          ]
+        }
+      }
     }
   ]
 }

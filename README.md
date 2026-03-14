@@ -347,6 +347,7 @@ erl -name debug@127.0.0.1 -setcookie $(cat ~/.erlang.cookie) -remsh dxnn@$HOSTNA
 
 - **AMI-STRATEGY.md** - Complete AMI-based deployment architecture and strategy
 - **IAM-Policy-Spot.md** - Required IAM permissions for spot instances
+- **MULTI-REGION-GUIDE.md** - Deploy instances in any AWS region
 - **Updates.md** - Recent changes and updates
 
 ## 🔑 Key Features

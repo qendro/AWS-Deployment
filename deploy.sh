@@ -672,6 +672,12 @@ load_config() {
         # Load spot handling configuration
         MARKET_TYPE=$(yq e '.aws.market_type' "$config_file")
         SPOT_MAX_PRICE=$(yq e '.aws.spot_max_price' "$config_file")
+        
+        # Apply overrides from environment variables
+        [[ -n "$OVERRIDE_INSTANCE_TYPE" ]] && INSTANCE_TYPE="$OVERRIDE_INSTANCE_TYPE"
+        [[ -n "$OVERRIDE_AVAILABILITY_ZONE" ]] && AVAILABILITY_ZONE="$OVERRIDE_AVAILABILITY_ZONE"
+        [[ -n "$OVERRIDE_AMI_ID" ]] && AMI_ID="$OVERRIDE_AMI_ID"
+        [[ -n "$OVERRIDE_SPOT_MAX_PRICE" ]] && SPOT_MAX_PRICE="$OVERRIDE_SPOT_MAX_PRICE"
         SPOT_ENABLED=$(yq e '.spot_handling.enabled' "$config_file")
         CHECKPOINT_DEADLINE=$(yq e '.spot_handling.checkpoint_deadline_seconds' "$config_file")
         POLL_INTERVAL=$(yq e '.spot_handling.poll_interval_seconds' "$config_file")

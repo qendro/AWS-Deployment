@@ -9,8 +9,33 @@ OUTPUT_DIR="${SCRIPT_DIR}/output"
 
 # Default values
 DEFAULT_REGION="us-east-1"
-DEFAULT_BASE_AMI="ami-020cba7c55df1f615"  # Ubuntu 24.04 LTS
 DEFAULT_INSTANCE_TYPE="t2.micro"
+
+# Get Ubuntu 24.04 AMI for region
+get_ubuntu_ami_for_region() {
+    local region="$1"
+    case "$region" in
+        us-east-1) echo "ami-020cba7c55df1f615" ;;
+        us-east-2) echo "ami-0ea3c35c5c3284d82" ;;
+        us-west-1) echo "ami-0d5ae304a0b933620" ;;
+        us-west-2) echo "ami-05134c8ef96964280" ;;
+        eu-west-1) echo "ami-0c38b837cd80f13bb" ;;
+        eu-west-2) echo "ami-0b9932f4918a00c4f" ;;
+        eu-west-3) echo "ami-00d81861317c2cc1f" ;;
+        eu-central-1) echo "ami-0084a47cc718c111a" ;;
+        ap-southeast-1) echo "ami-047126e50991d067b" ;;
+        ap-southeast-2) echo "ami-001f2488b35ca8aad" ;;
+        ap-northeast-1) echo "ami-0bba69335379e17f8" ;;
+        ap-northeast-2) echo "ami-040c33c6a51fd5d96" ;;
+        ap-south-1) echo "ami-0dee22c13ea7a9a67" ;;
+        sa-east-1) echo "ami-0c820c196a818d66a" ;;
+        ca-central-1) echo "ami-0c3e3e7af817ad732" ;;
+        *) 
+            log_warning "Unknown region: $region, using us-east-1 AMI"
+            echo "ami-020cba7c55df1f615"
+            ;;
+    esac
+}
 AMI_PREFIX="dxnn-trader"
 DXNN_REPO="https://github.com/qendro/DXNN-Trader-v2.git"
 DXNN_VERSION="main"
@@ -64,7 +89,7 @@ AMI_NAME=""
 AMI_ID=""
 FORCE=false
 REGION="${AWS_DEFAULT_REGION:-$DEFAULT_REGION}"
-BASE_AMI="$DEFAULT_BASE_AMI"
+BASE_AMI=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -81,6 +106,12 @@ while [[ $# -gt 0 ]]; do
         *) log_error "Unknown option: $1"; show_help; exit 1 ;;
     esac
 done
+
+# Set base AMI based on region if not explicitly provided
+if [[ -z "$BASE_AMI" ]]; then
+    BASE_AMI=$(get_ubuntu_ami_for_region "$REGION")
+    log_info "Auto-selected Ubuntu 24.04 AMI for $REGION: $BASE_AMI"
+fi
 
 [[ -z "$ACTION" ]] && { show_help; exit 1; }
 
@@ -101,25 +132,35 @@ mkdir -p "$OUTPUT_DIR"
 
 # List AMIs
 list_amis() {
-    log_info "Listing DXNN AMIs in region: $REGION"
+    log_info "Listing DXNN AMIs across US regions..."
     
-    amis=$(aws ec2 describe-images \
-        --owners self \
-        --filters "Name=name,Values=${AMI_PREFIX}-*" \
-        --query 'Images[*].[ImageId,Name,CreationDate,State]' \
-        --output text | sort -k3 -r)
-    
-    if [[ -z "$amis" ]]; then
-        log_warning "No DXNN AMIs found"
-        return 0
-    fi
+    # Only check US regions for speed
+    regions="us-east-1 us-east-2 us-west-1 us-west-2"
     
     echo ""
-    printf "%-22s %-50s %-25s %-10s\n" "AMI ID" "Name" "Created" "State"
-    echo "────────────────────────────────────────────────────────────────────────────────────────────────────"
-    echo "$amis" | while read -r ami_id name created state; do
-        printf "%-22s %-50s %-25s %-10s\n" "$ami_id" "$name" "$created" "$state"
+    printf "%-22s %-50s %-15s %-25s %-10s\n" "AMI ID" "Name" "Region" "Created" "State"
+    echo "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────"
+    
+    # Run queries in parallel for speed
+    for region in $regions; do
+        (
+            amis=$(aws ec2 describe-images \
+                --region "$region" \
+                --owners self \
+                --filters "Name=name,Values=${AMI_PREFIX}-*" \
+                --query 'Images[*].[ImageId,Name,CreationDate,State]' \
+                --output text 2>/dev/null | sort -k3 -r)
+            
+            if [[ -n "$amis" ]]; then
+                echo "$amis" | while read -r ami_id name created state; do
+                    printf "%-22s %-50s %-15s %-25s %-10s\n" "$ami_id" "$name" "$region" "$created" "$state"
+                done
+            fi
+        ) &
     done
+    
+    # Wait for all background jobs to complete
+    wait
     echo ""
 }
 

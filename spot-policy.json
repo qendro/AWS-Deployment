@@ -20,7 +20,19 @@
       "Action": [
         "ec2:DescribeSpotInstanceRequests",
         "ec2:DescribeInstances",
-        "ec2:DescribeInstanceStatus"
+        "ec2:DescribeInstanceStatus",
+        "ec2:DescribeRegions",
+        "ec2:DescribeAvailabilityZones"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "AMIManagementMultiRegion",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeImages",
+        "ec2:CopyImage",
+        "ec2:CreateTags"
       ],
       "Resource": "*"
     }
