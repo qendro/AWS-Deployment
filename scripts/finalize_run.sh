@@ -4,43 +4,117 @@
 
 set -euo pipefail
 
+# Early error logging (before log function is defined)
+early_log() {
+    echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] $*" | tee -a "${LOG_FILE:-/var/log/dxnn-run.log}" >&2
+}
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_HELPER="${SCRIPT_DIR}/dxnn-config.sh"
 if [[ -f "$CONFIG_HELPER" ]]; then
     # shellcheck disable=SC1090
     # shellcheck source=scripts/dxnn-config.sh
-    source "$CONFIG_HELPER"
+    source "$CONFIG_HELPER" || { early_log "ERROR: Failed to source $CONFIG_HELPER"; exit 1; }
 else
-    echo "DXNN configuration helper not found: $CONFIG_HELPER" >&2
+    early_log "ERROR: DXNN configuration helper not found: $CONFIG_HELPER"
     exit 1
 fi
+
+# Keep an explicit caller choice (including false) ahead of instance defaults.
+AUTO_TERMINATE_OVERRIDE="${AUTO_TERMINATE-}"
 
 # Optional environment overrides
 if [[ -f /etc/dxnn-env ]]; then
     # shellcheck disable=SC1091
-    source /etc/dxnn-env
+    source /etc/dxnn-env || { early_log "WARN: Failed to source /etc/dxnn-env"; }
+fi
+if [[ -n "$AUTO_TERMINATE_OVERRIDE" ]]; then
+    export AUTO_TERMINATE="$AUTO_TERMINATE_OVERRIDE"
 fi
 
-load_dxnn_config
+load_dxnn_config || { early_log "ERROR: Failed to load DXNN config"; exit 1; }
 
 # Configuration
 AWS_CLI_BIN="${AWS_CLI_BIN:-aws}"
 LOCK_FILE="/tmp/dxnn.finalize.lock"
-LOG_FILE="/var/log/dxnn-run.log"
+LOG_FILE="${LOG_FILE:-/var/log/dxnn-run.log}"
+LINEAGE_FILE="${LINEAGE_FILE:-/var/lib/dxnn/lineage_id}"
 COMPLETION_STATUS="${COMPLETION_STATUS:-unknown}"
 EXIT_CODE="${EXIT_CODE:-1}"
 MANIFEST_FILE="/tmp/dxnn_manifest.txt"
+
+# Logging function with UTC timestamps (must be defined early)
+log() {
+    local level="$1"
+    shift
+    echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] $level: $*" | tee -a "$LOG_FILE"
+}
 
 # S3 Configuration (from environment or config)
 dxnn_assign_default S3_BUCKET "${DXNN_CFG_S3_BUCKET:-dxnn-checkpoints}" "dxnn-checkpoints"
 dxnn_assign_default S3_PREFIX "${DXNN_CFG_S3_PREFIX:-dxnn}" "dxnn"
 dxnn_assign_default POPULATION_ID "${POPULATION_ID:-}" ""
 dxnn_assign_default LINEAGE_ID "" ""
+dxnn_assign_default JOB_ID "" ""
 
-# Extract lineage_id from population_id if not provided
-# Format: 2025-02-11T15-30-45Z_a3f9_run1 -> a3f9 (just the 4-char code)
-if [[ -z "$LINEAGE_ID" && -n "$POPULATION_ID" ]]; then
-    LINEAGE_ID=$(echo "$POPULATION_ID" | awk -F'_' '{print $2}')
+# Handle "unknown" population_id from crashes
+if [[ "$POPULATION_ID" == "unknown" || -z "$POPULATION_ID" ]]; then
+    # Generate crash diagnostic identifiers
+    TIMESTAMP=$(date -u '+%Y-%m-%dT%H-%M-%SZ')
+
+    # Try to get or generate lineage_id
+    if [[ -f "$LINEAGE_FILE" ]]; then
+        LINEAGE_ID=$(cat "$LINEAGE_FILE")
+    else
+        LINEAGE_ID=$(od -An -N2 -tx1 /dev/urandom | tr -d ' \n')
+        mkdir -p "$(dirname "$LINEAGE_FILE")"
+        echo "$LINEAGE_ID" > "$LINEAGE_FILE"
+    fi
+
+    # Create crash-specific identifiers
+    JOB_ID="${TIMESTAMP}_${LINEAGE_ID}"
+    POPULATION_ID="${TIMESTAMP}_${LINEAGE_ID}_crash"
+
+    log "WARN" "No population_id from DXNN - using crash diagnostic ID: $POPULATION_ID"
+    log "INFO" "Generated identifiers: JOB_ID=$JOB_ID, LINEAGE_ID=$LINEAGE_ID, POPULATION_ID=$POPULATION_ID"
+else
+    # Extract lineage_id from population_id if not provided
+    # Format: 2025-02-11T15-30-45Z_a3f9_run1 -> a3f9 (just the 4-char code)
+    if [[ -z "$LINEAGE_ID" ]]; then
+        LINEAGE_ID=$(echo "$POPULATION_ID" | awk -F'_' '{print $2}')
+    fi
+
+    # Extract or create job_id (timestamp_lineage format)
+    # Format: 2025-02-11T15-30-45Z_a3f9
+    if [[ -z "$JOB_ID" ]]; then
+        # Extract timestamp and lineage from population_id
+        # 2025-02-11T15-30-45Z_a3f9_run1 -> 2025-02-11T15-30-45Z_a3f9
+        JOB_ID=$(echo "$POPULATION_ID" | sed -E 's/^([^_]+_[^_]+)_.*/\1/')
+    fi
+fi
+
+# Validate that we have all required identifiers after generation
+if [[ -z "$LINEAGE_ID" ]]; then
+    log "ERROR" "LINEAGE_ID could not be determined or generated"
+    # Generate emergency fallback
+    LINEAGE_ID="emrg"
+    log "WARN" "Using emergency fallback LINEAGE_ID: $LINEAGE_ID"
+fi
+
+if [[ -z "$JOB_ID" ]]; then
+    log "ERROR" "JOB_ID could not be determined or generated"
+    # Generate emergency fallback
+    TIMESTAMP=$(date -u '+%Y-%m-%dT%H-%M-%SZ')
+    JOB_ID="${TIMESTAMP}_${LINEAGE_ID}"
+    log "WARN" "Using emergency fallback JOB_ID: $JOB_ID"
+fi
+
+if [[ -z "$POPULATION_ID" ]]; then
+    log "ERROR" "POPULATION_ID could not be determined or generated"
+    # Generate emergency fallback
+    TIMESTAMP=$(date -u '+%Y-%m-%dT%H-%M-%SZ')
+    POPULATION_ID="${TIMESTAMP}_${LINEAGE_ID}_emergency"
+    log "WARN" "Using emergency fallback POPULATION_ID: $POPULATION_ID"
 fi
 
 # Artifacts to capture - now from checkpoint directory
@@ -65,18 +139,8 @@ fi
 AWS_CLI_INSTALL_DIR="${AWS_CLI_INSTALL_DIR:-/usr/local/aws-cli}"
 AWS_CLI_BIN_DIR="${AWS_CLI_BIN_DIR:-/usr/local/bin}"
 
-# Logging function with UTC timestamps
-log() {
-    local level="$1"
-    shift
-    echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] $level: $*" | tee -a "$LOG_FILE"
-}
-
-# If still no lineage_id, we cannot proceed
-if [[ -z "$LINEAGE_ID" ]]; then
-    log "ERROR" "LINEAGE_ID could not be determined from POPULATION_ID=$POPULATION_ID"
-    exit 1
-fi
+# Log final identifiers for debugging
+log "INFO" "Final identifiers: S3_BUCKET=$S3_BUCKET, S3_PREFIX=$S3_PREFIX, JOB_ID=$JOB_ID, LINEAGE_ID=$LINEAGE_ID, POPULATION_ID=$POPULATION_ID"
 
 # Ensure AWS CLI is present before doing any work
 run_privileged() {
@@ -246,21 +310,89 @@ RETRY_DELAYS=(1 2 4 8 16 32 64)
 enumerate_artifacts() {
     local checkpoint_dir="$1"
     
-    # Upload all files from the checkpoint directory recursively
-    if [[ -d "$checkpoint_dir" ]]; then
-        while IFS= read -r -d '' file; do
-            printf '%s\0' "$file"
-        done < <(find "$checkpoint_dir" -type f -print0)
+    # Upload essential files for diagnostics:
+    # - logs/ folder (all files/folders) - if exists
+    # - config.erl - if exists
+    # - exp_runner.erl - if exists
+    # - Mnesia.nonode@nohost/ folder (all mnesia files) - if exists
+    # - _MANIFEST - if exists
+    # - _SUCCESS - if exists
+    # - System logs (always attempt to upload)
+
+    if [[ ! -d "$checkpoint_dir" ]]; then
+        log "ERROR" "Checkpoint directory not found: $checkpoint_dir" >&2
+        # Still try to upload system logs
+        for log_file in /var/log/cloud-init-output.log /var/log/cloud-init.log /var/log/dxnn-run.log /var/log/spot-watch.log; do
+            if [[ -f "$log_file" ]]; then
+                printf '%s\0' "$log_file"
+            fi
+        done
+        return 0
+    fi
+
+    # Helper function to enumerate files in a directory
+    enumerate_dir() {
+        local dir="$1"
+        if [[ -d "$dir" ]]; then
+            find "$dir" -type f -print0 2>/dev/null || true
+        fi
+    }
+
+    # 1. logs/ folder (if exists)
+    enumerate_dir "$checkpoint_dir/logs"
+
+    # 2. Mnesia folder (check both standard and distributed node names)
+    if [[ -d "$checkpoint_dir/Mnesia.nonode@nohost" ]]; then
+        enumerate_dir "$checkpoint_dir/Mnesia.nonode@nohost"
     else
-        log "ERROR" "Checkpoint directory not found: $checkpoint_dir"
-        return 1
+        # Find any Mnesia.* directory
+        for mnesia_dir in "$checkpoint_dir"/Mnesia.*; do
+            if [[ -d "$mnesia_dir" ]]; then
+                enumerate_dir "$mnesia_dir"
+            fi
+        done
+    fi
+
+    # 3. Individual files in root (if they exist)
+    for file in config.erl exp_runner.erl _MANIFEST _SUCCESS; do
+        if [[ -f "$checkpoint_dir/$file" ]]; then
+            printf '%s\0' "$checkpoint_dir/$file"
+        fi
+    done
+
+    # 4. System log files from /var/log (always attempt - critical for crash diagnosis)
+    for log_file in /var/log/cloud-init-output.log /var/log/cloud-init.log /var/log/dxnn-run.log /var/log/spot-watch.log; do
+        if [[ -f "$log_file" ]]; then
+            printf '%s\0' "$log_file"
+        fi
+    done
+
+    # 5. Additional diagnostic files for crashes
+    if [[ "$COMPLETION_STATUS" == "crash" || "$COMPLETION_STATUS" == "failed" ]]; then
+        # Upload dmesg output for OOM analysis
+        if command -v dmesg >/dev/null 2>&1; then
+            local dmesg_file="/tmp/dmesg_crash.log"
+            dmesg > "$dmesg_file" 2>/dev/null || true
+            if [[ -f "$dmesg_file" ]]; then
+                printf '%s\0' "$dmesg_file"
+            fi
+        fi
+
+        # Upload memory info
+        if [[ -f /proc/meminfo ]]; then
+            local meminfo_file="/tmp/meminfo_crash.log"
+            cat /proc/meminfo > "$meminfo_file" 2>/dev/null || true
+            if [[ -f "$meminfo_file" ]]; then
+                printf '%s\0' "$meminfo_file"
+            fi
+        fi
     fi
 }
 
 # Check if required environment variables are set
 check_config() {
-    if [[ -z "$S3_BUCKET" || -z "$LINEAGE_ID" || -z "$POPULATION_ID" ]]; then
-        log "ERROR" "Missing required configuration: S3_BUCKET=$S3_BUCKET LINEAGE_ID=$LINEAGE_ID POPULATION_ID=$POPULATION_ID"
+    if [[ -z "$S3_BUCKET" || -z "$JOB_ID" || -z "$LINEAGE_ID" || -z "$POPULATION_ID" ]]; then
+        log "ERROR" "Missing required configuration: S3_BUCKET=$S3_BUCKET JOB_ID=$JOB_ID LINEAGE_ID=$LINEAGE_ID POPULATION_ID=$POPULATION_ID"
         exit 1
     fi
 
@@ -269,7 +401,7 @@ check_config() {
 
 # Check if S3 sentinel already exists using AWS CLI
 check_s3_sentinel() {
-    local s3_key="$S3_PREFIX/$LINEAGE_ID/$POPULATION_ID/_SUCCESS"
+    local s3_key="$S3_PREFIX/$JOB_ID/$POPULATION_ID/_SUCCESS"
     local temp_file="/tmp/_SUCCESS_check"
 
     if aws_s3_cp "s3://$S3_BUCKET/$s3_key" "$temp_file" >/dev/null 2>&1; then
@@ -329,12 +461,27 @@ upload_checkpoint_to_s3() {
             continue
         fi
         
-        # Calculate relative path from checkpoint directory
-        local relative_path="${file#$checkpoint_dir/}"
-        if [[ "$relative_path" == "$file" ]]; then
+        # Calculate relative path
+        local relative_path
+
+        # Keep checkpoint paths intact even when the checkpoint is under /tmp.
+        if [[ "$file" == "$checkpoint_dir/"* ]]; then
+            relative_path="${file#$checkpoint_dir/}"
+        # Handle system log files from /var/log
+        elif [[ "$file" == /var/log/* ]]; then
             relative_path="$(basename "$file")"
+        # Handle temporary diagnostic files
+        elif [[ "$file" == /tmp/* ]]; then
+            relative_path="$(basename "$file")"
+        else
+            # Calculate relative path from checkpoint directory
+            relative_path="${file#$checkpoint_dir/}"
+            if [[ "$relative_path" == "$file" ]]; then
+                relative_path="$(basename "$file")"
+            fi
+            relative_path="${relative_path##/}"
         fi
-        relative_path="${relative_path##/}"
+
         [[ -z "$relative_path" ]] && continue
 
         local s3_key="$s3_prefix/$relative_path"
@@ -345,6 +492,11 @@ upload_checkpoint_to_s3() {
             uploaded_count=$((uploaded_count + 1))
         else
             failed_files+=("$relative_path")
+        fi
+
+        # Clean up temporary diagnostic files after upload
+        if [[ "$file" == /tmp/dmesg_crash.log || "$file" == /tmp/meminfo_crash.log ]]; then
+            rm -f "$file" 2>/dev/null || true
         fi
     done < <(enumerate_artifacts "$checkpoint_dir")
 
@@ -367,7 +519,7 @@ upload_checkpoint_to_s3() {
 create_s3_sentinel() {
     local status="$1"
     local sentinel_file="/tmp/_SUCCESS"
-    local s3_key="$S3_PREFIX/$LINEAGE_ID/$POPULATION_ID/_SUCCESS"
+    local s3_key="$S3_PREFIX/$JOB_ID/$POPULATION_ID/_SUCCESS"
     local completion_reason
 
     case "$COMPLETION_STATUS" in
@@ -383,6 +535,12 @@ create_s3_sentinel() {
         incremental)
             completion_reason="incremental_upload"
             ;;
+        manual)
+            completion_reason="manual_upload"
+            ;;
+        crash)
+            completion_reason="early_crash"
+            ;;
         *)
             completion_reason="unknown"
             ;;
@@ -391,6 +549,7 @@ create_s3_sentinel() {
     # Create sentinel with metadata
     cat > "$sentinel_file" << EOF
 {
+    "job_id": "$JOB_ID",
     "population_id": "$POPULATION_ID",
     "lineage_id": "$LINEAGE_ID",
     "finalized_at": "$(date -u '+%Y-%m-%dT%H:%M:%SZ')",
@@ -420,6 +579,7 @@ update_latest_pointer() {
 
     cat > "$pointer_file" << EOF
 {
+    "job_id": "$JOB_ID",
     "population_id": "$POPULATION_ID",
     "lineage_id": "$LINEAGE_ID",
     "updated_at": "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
@@ -427,7 +587,7 @@ update_latest_pointer() {
 EOF
 
     if upload_file_to_s3 "$pointer_file" "$s3_key"; then
-        log "INFO" "LATEST_PTR_UPDATED - Updated pointer to $POPULATION_ID"
+        log "INFO" "LATEST_PTR_UPDATED - Updated pointer to $POPULATION_ID in job $JOB_ID"
     else
         log "WARN" "LATEST_PTR_FAILED - Could not update latest run pointer"
     fi
@@ -437,7 +597,7 @@ EOF
 
 # Upload manifest describing artifacts
 upload_manifest() {
-    local s3_manifest_key="$S3_PREFIX/$LINEAGE_ID/$POPULATION_ID/_MANIFEST"
+    local s3_manifest_key="$S3_PREFIX/$JOB_ID/$POPULATION_ID/_MANIFEST"
 
     if [[ ! -s "$MANIFEST_FILE" ]]; then
         log "INFO" "MANIFEST_EMPTY - No files recorded; skipping manifest upload"
@@ -456,10 +616,11 @@ upload_manifest() {
 # Create failure sentinel
 create_failure_sentinel() {
     local sentinel_file="/tmp/_FAILED_UPLOAD"
-    local s3_key="$S3_PREFIX/$LINEAGE_ID/$POPULATION_ID/_FAILED_UPLOAD"
+    local s3_key="$S3_PREFIX/$JOB_ID/$POPULATION_ID/_FAILED_UPLOAD"
     
     cat > "$sentinel_file" << EOF
 {
+    "job_id": "$JOB_ID",
     "population_id": "$POPULATION_ID",
     "lineage_id": "$LINEAGE_ID",
     "failed_at": "$(date -u '+%Y-%m-%dT%H:%M:%SZ')",
@@ -486,13 +647,15 @@ finalize() {
         return 0
     fi
     
-    # Find latest checkpoint directory OR use DXNN directory directly for manual uploads
+    # Find latest checkpoint directory OR use DXNN directory directly
     log "INFO" "Looking for checkpoint in $CHECKPOINT_BASE_DIR or using direct upload"
     
     local checkpoint_dirs
     checkpoint_dirs=$(find "$CHECKPOINT_BASE_DIR" -maxdepth 1 -type d -name "checkpoint-*" 2>/dev/null | sort -r)
     
     local source_dir
+    local has_mnesia=false
+
     if [[ -n "$checkpoint_dirs" ]]; then
         # Use latest checkpoint
         source_dir=$(echo "$checkpoint_dirs" | head -n 1)
@@ -503,24 +666,22 @@ finalize() {
         log "INFO" "No checkpoint found - uploading directly from $source_dir"
     fi
     
-    # Verify source has Mnesia directory (check both standard and distributed node names)
+    # Check if Mnesia directory exists (may not exist for early crashes)
     if [[ -d "$source_dir/Mnesia.nonode@nohost" ]]; then
         log "INFO" "Found Mnesia directory: Mnesia.nonode@nohost"
+        has_mnesia=true
     elif ls -d "$source_dir"/Mnesia.* >/dev/null 2>&1; then
         log "INFO" "Found Mnesia directory: $(ls -d "$source_dir"/Mnesia.* | head -1)"
+        has_mnesia=true
     else
-        log "ERROR" "No Mnesia directory found in $source_dir"
-        return 1
+        log "WARN" "No Mnesia directory found in $source_dir - early crash detected"
+        log "INFO" "Will upload diagnostic logs only"
+        has_mnesia=false
     fi
     
-    # Upload to S3
-    local s3_prefix="$S3_PREFIX/$LINEAGE_ID/$POPULATION_ID"
+    # Upload to S3 with job_id/population_id structure
+    local s3_prefix="$S3_PREFIX/$JOB_ID/$POPULATION_ID"
     if upload_checkpoint_to_s3 "$source_dir" "$s3_prefix"; then
-        # Upload main log file (not in checkpoint)
-        if [[ -f "$LOG_FILE" ]]; then
-            upload_file_to_s3 "$LOG_FILE" "$s3_prefix/dxnn-run.log" || true
-        fi
-
         # Upload manifest
         if ! upload_manifest; then
             log "ERROR" "FINALIZE_FAILED - Manifest upload failed"
@@ -530,7 +691,10 @@ finalize() {
         
         # Create success sentinel
         if create_s3_sentinel "success"; then
-            update_latest_pointer
+            # Diagnostics without a database must not replace a restorable run.
+            if [[ "$has_mnesia" == "true" ]]; then
+                update_latest_pointer
+            fi
             log "INFO" "FINALIZE_SUCCESS - Checkpoint uploaded to s3://$S3_BUCKET/$s3_prefix"
             return 0
         else
@@ -582,28 +746,19 @@ main() {
         return 0
     fi
 
-    if [[ "$COMPLETION_STATUS" != "normal" ]]; then
-        log "INFO" "AUTO_TERMINATE requested but completion_status=$COMPLETION_STATUS; keeping instance for inspection"
-        if [[ "$finalize_status" == "failure" ]]; then
-            return 1
-        fi
-        return 0
-    fi
-
-    if [[ "$EXIT_CODE" != "0" ]]; then
-        log "INFO" "AUTO_TERMINATE requested but exit_code=$EXIT_CODE; keeping instance for inspection"
-        if [[ "$finalize_status" == "failure" ]]; then
-            return 1
-        fi
-        return 0
-    fi
-
+    # Keep the only local copy when an upload or its success marker failed.
     if [[ "$finalize_status" != "success" ]]; then
-        log "INFO" "AUTO_TERMINATE requested but finalization failed; keeping instance for inspection"
+        log "ERROR" "Finalization failed - keeping instance running for recovery"
         return 1
     fi
 
-    log "INFO" "AUTO_TERMINATE enabled - powering off instance"
+    # Completed uploads may terminate for any training outcome, including crashes.
+    log "INFO" "AUTO_TERMINATE enabled - Terminating instance (status=$COMPLETION_STATUS, exit=$EXIT_CODE, finalize=$finalize_status)"
+    log "INFO" "Diagnostics uploaded to S3: s3://$S3_BUCKET/$S3_PREFIX/$JOB_ID/$POPULATION_ID/"
+
+    # Give logs time to flush
+    sleep 3
+
     if ! run_privileged poweroff; then
         log "ERROR" "Poweroff command failed; attempting shutdown fallback"
         run_privileged shutdown -h now || log "ERROR" "Shutdown fallback also failed"
@@ -611,4 +766,6 @@ main() {
 }
 
 # Execute main function
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi

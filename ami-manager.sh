@@ -476,7 +476,23 @@ EOF
     log_info "Waiting for AMI to be available (this may take several minutes)..."
     aws ec2 wait image-available --image-ids "$new_ami_id"
     
-    log_success "AMI is now available: $new_ami_id"
+    log_success "AMI metadata is available: $new_ami_id"
+
+    # Wait for underlying snapshot to complete
+    log_info "Waiting for snapshot to complete..."
+    local snapshot_id
+    snapshot_id=$(aws ec2 describe-images \
+        --image-ids "$new_ami_id" \
+        --query 'Images[0].BlockDeviceMappings[0].Ebs.SnapshotId' \
+        --output text)
+
+    if [[ -n "$snapshot_id" && "$snapshot_id" != "None" ]]; then
+        log_info "Snapshot ID: $snapshot_id"
+        aws ec2 wait snapshot-completed --snapshot-ids "$snapshot_id"
+        log_success "Snapshot is fully ready: $snapshot_id"
+    fi
+
+    log_success "AMI is now fully ready: $new_ami_id"
     
     # Cleanup
     log_info "Cleaning up build resources..."

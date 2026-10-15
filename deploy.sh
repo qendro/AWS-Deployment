@@ -420,6 +420,34 @@ launch_instance() {
     
     log_info "Using AMI: $ami_id"
     
+    # Validate AMI and snapshot are ready
+    log_info "Validating AMI and snapshot status..."
+    local ami_state snapshot_id snapshot_state
+    ami_state=$(aws ec2 describe-images --image-ids "$ami_id" --query 'Images[0].State' --output text 2>/dev/null || echo "")
+
+    if [[ "$ami_state" != "available" ]]; then
+        log_error "AMI is not available (state: $ami_state)"
+        exit 1
+    fi
+
+    snapshot_id=$(aws ec2 describe-images --image-ids "$ami_id" --query 'Images[0].BlockDeviceMappings[0].Ebs.SnapshotId' --output text 2>/dev/null || echo "")
+
+    if [[ -n "$snapshot_id" && "$snapshot_id" != "None" ]]; then
+        snapshot_state=$(aws ec2 describe-snapshots --snapshot-ids "$snapshot_id" --query 'Snapshots[0].State' --output text 2>/dev/null || echo "")
+
+        if [[ "$snapshot_state" == "pending" ]]; then
+            log_warning "Snapshot is still pending, waiting for completion..."
+            log_info "Snapshot ID: $snapshot_id"
+            aws ec2 wait snapshot-completed --snapshot-ids "$snapshot_id"
+            log_success "Snapshot is now ready"
+        elif [[ "$snapshot_state" == "completed" ]]; then
+            log_success "AMI and snapshot validated successfully"
+        else
+            log_error "Snapshot is in unexpected state: $snapshot_state"
+            exit 1
+        fi
+    fi
+
     # Prepare user data script
     local user_data_file="$OUTPUT_DIR/user-data-$timestamp.sh"
     generate_user_data "$app_type" > "$user_data_file"

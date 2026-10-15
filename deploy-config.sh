@@ -169,22 +169,37 @@ ssh_exec << EOF
 set -e
 cd /home/ubuntu/dxnn-trader
 
-# Stash any local changes
-if ! git diff-index --quiet HEAD --; then
-    echo "Stashing local changes..."
-    git stash push -m "Auto-stash before deploy-config.sh pull at \$(date)"
+# Fix Git ownership and permission issues
+sudo chown -R ubuntu:ubuntu /home/ubuntu/dxnn-trader 2>/dev/null || true
+git config --global --add safe.directory /home/ubuntu/dxnn-trader 2>/dev/null || true
+
+# Configure git user if not set (required for stash)
+git config user.email "deploy@dxnn-trader.local" 2>/dev/null || true
+git config user.name "DXNN Deploy" 2>/dev/null || true
+
+# Check git status for debugging
+echo "Git status before cleanup:"
+git status --short 2>&1 || echo "Git status check failed"
+
+# Preserve instance edits and untracked files before switching versions.
+if [[ -n "\$(git status --porcelain)" ]]; then
+    echo "Stashing instance changes before deployment..."
+    git stash push --include-untracked -m "Auto-stash before deploy-config.sh pull at \$(date)"
 fi
 
 # Fetch latest
+echo "Fetching from origin..."
 git fetch origin
 
 # Check if branch/tag exists
 if git rev-parse --verify "origin/$GIT_BRANCH" >/dev/null 2>&1; then
     # Remote branch
+    echo "Checking out remote branch: $GIT_BRANCH"
     git checkout "$GIT_BRANCH"
     git pull origin "$GIT_BRANCH"
 elif git rev-parse --verify "$GIT_BRANCH" >/dev/null 2>&1; then
     # Local branch or tag
+    echo "Checking out local branch/tag: $GIT_BRANCH"
     git checkout "$GIT_BRANCH"
 else
     echo "ERROR: Branch/tag not found: $GIT_BRANCH"
@@ -192,6 +207,7 @@ else
 fi
 
 echo "Current commit: \$(git rev-parse --short HEAD)"
+echo "Current branch: \$(git branch --show-current)"
 EOF
 
 log_success "Pulled latest from $GIT_BRANCH"

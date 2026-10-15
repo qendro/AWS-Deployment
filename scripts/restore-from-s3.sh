@@ -25,6 +25,7 @@ AWS_CLI_BIN="${AWS_CLI_BIN:-aws}"
 dxnn_assign_default S3_BUCKET "${DXNN_CFG_S3_BUCKET:-dxnn-checkpoints}" "dxnn-checkpoints"
 dxnn_assign_default S3_PREFIX "${DXNN_CFG_S3_PREFIX:-dxnn}" "dxnn"
 dxnn_assign_default LINEAGE_ID "${DXNN_CFG_LINEAGE_ID:-}" ""
+JOB_ID="${RESTORE_JOB_ID:-}"
 dxnn_assign_default RESTORE_FROM_S3 "${DXNN_CFG_RESTORE_FROM_S3:-false}" "false"
 dxnn_finalize_bool RESTORE_FROM_S3 "${DXNN_CFG_RESTORE_FROM_S3:-false}"
 POPULATION_ID=""
@@ -225,8 +226,10 @@ resolve_population_id() {
     if aws_s3_cp "s3://$S3_BUCKET/$pointer_key" "$pointer_tmp" >/dev/null 2>&1; then
         if command -v jq >/dev/null 2>&1; then
             POPULATION_ID=$(jq -r '.population_id // empty' "$pointer_tmp")
+            JOB_ID=$(jq -r '.job_id // empty' "$pointer_tmp")
         else
             POPULATION_ID=$(sed -n 's/.*"population_id"[[:space:]]*:[[:space:]]*"\([^\"]*\)".*/\1/p' "$pointer_tmp" | head -n1)
+            JOB_ID=$(sed -n 's/.*"job_id"[[:space:]]*:[[:space:]]*"\([^\"]*\)".*/\1/p' "$pointer_tmp" | head -n1)
         fi
         rm -f "$pointer_tmp"
 
@@ -244,7 +247,7 @@ resolve_population_id() {
 }
 
 restore_manifest() {
-    local manifest_key="$S3_PREFIX/$LINEAGE_ID/$POPULATION_ID/_MANIFEST"
+    local manifest_key="$S3_PREFIX/${JOB_ID:-$LINEAGE_ID}/$POPULATION_ID/_MANIFEST"
     local manifest_tmp
     manifest_tmp=$(mktemp)
 
@@ -265,7 +268,7 @@ restore_manifest() {
         target_dir=$(dirname "$target_path")
         mkdir -p "$target_dir"
 
-        local object_key="$S3_PREFIX/$LINEAGE_ID/$POPULATION_ID/$relative_path"
+        local object_key="$S3_PREFIX/${JOB_ID:-$LINEAGE_ID}/$POPULATION_ID/$relative_path"
         if aws_s3_cp "s3://$S3_BUCKET/$object_key" "$target_path" >/dev/null 2>&1; then
             log "INFO" "Restored $relative_path"
             if [[ -n "${file_mode:-}" && "$file_mode" =~ ^[0-7]{3,4}$ ]]; then

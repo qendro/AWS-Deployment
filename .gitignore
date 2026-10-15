@@ -13,6 +13,8 @@ config/aws-credentials
 
 # AWS CLI local cache (only if copied into repo — remove if not applicable)
 .aws/
+.oci/
+config/oci-local*.yml
 
 # Generated files
 output/
@@ -50,8 +52,7 @@ known_hosts*
 ehthumbs.db
 Thumbs.db
 
-# Docker build context
-.dockerignore
+# Docker build exclusions are versioned to keep secrets out of images.
 
 # Node modules (if using Node.js deployments)
 node_modules/

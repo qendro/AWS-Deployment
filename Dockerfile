@@ -14,6 +14,8 @@ RUN apt-get update && apt-get install -y \
     ssh \
     jq \
     ca-certificates \
+    python3 \
+    python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
 # Install AWS CLI v2 and yq
@@ -23,6 +25,13 @@ RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o "awscliv
     && rm -rf awscliv2.zip aws/ \
     && curl -L "https://github.com/mikefarah/yq/releases/latest/download/yq_linux_arm64" -o /usr/local/bin/yq \
     && chmod +x /usr/local/bin/yq
+
+# OCI tooling is installed only in this shared deployment container.
+COPY requirements-oci.txt /tmp/requirements-oci.txt
+RUN python3 -m venv /opt/oci \
+    && /opt/oci/bin/pip install --no-cache-dir -r /tmp/requirements-oci.txt
+ENV PATH="/opt/oci/bin:${PATH}"
+LABEL org.dxnn.oci-sdk="2.187.2"
 
 # Create working directory
 WORKDIR /aws-deployment

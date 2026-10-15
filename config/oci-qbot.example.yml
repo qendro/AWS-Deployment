@@ -1,0 +1,36 @@
+# Copy to config/oci-local.yml and supply your own OCIDs and SSH paths.
+name: qbot
+compartment_id: ocid1.tenancy.oc1..REPLACE_WITH_QENDRO77_ROOT_OCID
+region: us-chicago-1
+# availability_domain: "YOUR_PREFIX:US-CHICAGO-1-AD-1" # preference, with fallback
+mode: free-only # paid is an explicit authorization for billable resources
+image:
+  display_name: Canonical-Ubuntu-24.04-Minimal-aarch64-2026.09.18-0
+  # id: ocid1.image.oc1... # use exactly one selector
+shape: VM.Standard.A1.Flex
+ocpus: 2
+memory_gbs: 8
+capacity_attempts_per_ad: 1 # on-demand; bounded to 1..3
+network:
+  # Existing qbot network: resolve exact names safely, never claim ownership.
+  # qbot-public-subnet uses 10.0.0.0/24, with automatic IPv4 and no IPv6.
+  existing:
+    vcn_name: qbot-vcn
+    subnet_name: qbot-public-subnet
+    # subnet_id: ocid1.subnet.oc1... # alternative to both names
+  # To create a separate minimal public network, replace existing with create:
+  # create:
+  #   vcn_name: qbot-vcn
+  #   subnet_name: qbot-public-subnet
+  #   vcn_cidr: 10.0.0.0/16
+  #   subnet_cidr: 10.0.0.0/24
+  #   ssh_source_cidr: 203.0.113.4/32 # your real client IPv4 address/range
+ssh:
+  username: ubuntu
+  public_key: ~/.ssh/qbot_oci_ed25519.pub
+  private_key: ~/.ssh/qbot_oci_ed25519
+  # Omit BOTH key paths to generate a persistent pair in output/oci/keys/.
+# Fixed stage-one defaults: automatic private/public IPv4; no IPv6;
+# image-default boot volume; Oracle-managed keys; in-transit encryption;
+# IMDSv2 required; RESTORE_INSTANCE; Oracle's default migration choice;
+# Cloud Agent enabled, optional plugins disabled; no user-data/apps.

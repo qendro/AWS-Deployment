@@ -154,14 +154,19 @@ run_dxnn() {
         return 1
     fi
 
+    # Mark that tmux session was successfully created
+    local tmux_session_created=true
+
     log "INFO" "DXNN_WAITING - Monitoring tmux session completion..."
     while tmux has-session -t "$TMUX_SESSION" 2>/dev/null; do
         sleep 5
     done
 
     local exit_code=1
+    local exit_code_found=false
     if [[ -f "$SESSION_EXIT_CODE_FILE" ]]; then
         exit_code=$(cat "$SESSION_EXIT_CODE_FILE" 2>/dev/null || echo 1)
+        exit_code_found=true
     else
         log "WARN" "DXNN_EXIT_CODE_MISSING - Defaulting to 1"
     fi
@@ -175,10 +180,16 @@ run_dxnn() {
         LINEAGE_ID=$(echo "$POPULATION_ID" | awk -F'_' '{print $2}')
         export LINEAGE_ID
         log "INFO" "DXNN_POPULATION_EXTRACTED - population_id=$POPULATION_ID lineage_id=$LINEAGE_ID"
+    else
+        log "INFO" "DXNN_POPULATION_EXTRACTED - population_id=$POPULATION_ID lineage_id="
     fi
 
     rm -f "$SESSION_EXIT_CODE_FILE" "$TMUX_RUNNER_SCRIPT"
     log "INFO" "DXNN_PROCESS_END - Session completed with code: $exit_code"
+
+    # Return exit code and set flag that session ran
+    export TMUX_SESSION_CREATED="$tmux_session_created"
+    export EXIT_CODE_FOUND="$exit_code_found"
     return $exit_code
 }
 
@@ -196,16 +207,34 @@ finalize() {
         completion_status="interrupted"
         log "INFO" "COMPLETION_INTERRUPTED - Training interrupted (exit code: $exit_code), initiating S3 upload"
     else
-        completion_status="failed"
-        log "INFO" "COMPLETION_FAILED - Training failed (exit code: $exit_code), initiating S3 upload"
+        # Check if population_id was generated - if not, it's an early crash
+        if [[ "$POPULATION_ID" == "unknown" || -z "$POPULATION_ID" ]]; then
+            completion_status="crash"
+            log "INFO" "COMPLETION_CRASH - Early crash before population created (exit code: $exit_code), uploading diagnostics"
+        else
+            completion_status="failed"
+            log "INFO" "COMPLETION_FAILED - Training failed (exit code: $exit_code), initiating comprehensive diagnostic upload"
+        fi
     fi
     
     # Set environment variables for finalizer
     export COMPLETION_STATUS="$completion_status"
     export EXIT_CODE="$exit_code"
+    export UPLOAD_DIAGNOSTICS="true"  # Always upload full diagnostics
+    export POPULATION_ID="${POPULATION_ID:-}"
+    export LINEAGE_ID="${LINEAGE_ID:-}"
+    export JOB_ID="${JOB_ID:-}"
+    export S3_BUCKET="${S3_BUCKET:-dxnn-checkpoints}"
+    export S3_PREFIX="${S3_PREFIX:-dxnn-prod}"
+    export AUTO_TERMINATE="${AUTO_TERMINATE:-false}"
+    export AUTO_TERMINATE_DEFAULT="${AUTO_TERMINATE_DEFAULT:-false}"
     
     log "INFO" "FINALIZER_CALL - Calling finalize_run.sh with status: $completion_status, exit: $exit_code"
-    log "INFO" "S3_UPLOAD_START - Beginning upload to s3://$S3_BUCKET/$S3_PREFIX/$LINEAGE_ID/$POPULATION_ID/"
+    if [[ -n "$JOB_ID" && -n "$POPULATION_ID" ]]; then
+        log "INFO" "S3_UPLOAD_START - Beginning upload to s3://$S3_BUCKET/$S3_PREFIX/$JOB_ID/$POPULATION_ID/"
+    else
+        log "INFO" "S3_UPLOAD_START - Beginning upload (identifiers will be generated)"
+    fi
     
     # Call finalizer script
     if [[ -x "$FINALIZER_SCRIPT" ]]; then
@@ -225,38 +254,40 @@ main() {
     
     # Run DXNN and capture exit code
     local exit_code=0
-    local tmux_started=false
+    local should_finalize=false
     log "INFO" "WRAPPER_EXEC - Launching DXNN process..."
     
     if run_dxnn; then
         exit_code=0
-        tmux_started=true
+        should_finalize=true
         log "INFO" "WRAPPER_SUCCESS - DXNN process completed successfully"
     else
         exit_code=$?
         log "WARN" "WRAPPER_ERROR - DXNN process failed with exit code: $exit_code"
         
-        # Check if tmux session was created (even if it failed later)
-        # If tmux never started, don't finalize (no training data to upload)
-        if [[ ! -f "$SESSION_EXIT_CODE_FILE" ]] && ! tmux has-session -t "$TMUX_SESSION" 2>/dev/null; then
+        # Check if tmux session was actually created and ran
+        # If TMUX_SESSION_CREATED is set, the session started (even if it crashed later)
+        if [[ "${TMUX_SESSION_CREATED:-false}" == "true" ]]; then
+            log "INFO" "WRAPPER_DETECT - Tmux session ran (even though it failed), will finalize"
+            should_finalize=true
+        else
             log "ERROR" "WRAPPER_ABORT - Tmux session never started, skipping finalization"
             log "ERROR" "Instance will remain running for debugging"
             exit 1
         fi
-        tmux_started=true
     fi
     
-    log "INFO" "WRAPPER_FINALIZE - DXNN execution finished, starting finalization process"
-    
-    # Call finalizer with outcome (only if tmux actually ran)
-    if [[ "$tmux_started" == "true" ]]; then
+    if [[ "$should_finalize" == "true" ]]; then
+        log "INFO" "WRAPPER_FINALIZE - DXNN execution finished, starting finalization process"
+
+        # Always call finalizer to upload diagnostics (even on failures)
         finalize "$exit_code"
+
+        log "INFO" "WRAPPER_END - All operations completed"
     else
-        log "ERROR" "WRAPPER_SKIP_FINALIZE - Skipping finalization, no training occurred"
+        log "ERROR" "WRAPPER_SKIP_FINALIZE - Finalization skipped, instance remains running"
         exit 1
     fi
-    
-    log "INFO" "WRAPPER_END - All operations completed"
 }
 
 # Execute main function

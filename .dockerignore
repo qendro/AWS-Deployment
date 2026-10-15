@@ -1,0 +1,12 @@
+.git
+.env*
+.aws
+.oci
+config/aws-credentials
+output
+logs
+*.pem
+*.key
+**/__pycache__
+**/*.pyc
+config/*local*.yml

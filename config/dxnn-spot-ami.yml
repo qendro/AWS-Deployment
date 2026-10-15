@@ -4,7 +4,7 @@ metadata:
   version: "2.0"
 
 aws:
-  instance_type: "m5.large"  # "c7i.4xlarge", "c5.large", "t3.medium", "t2.medium", "m5.large"
+  instance_type: "m5.large"  # Recommended: "c7i.4xlarge", "c6i.4xlarge", "c5.4xlarge", "m5.xlarge"
   market_type: "spot"
   spot_max_price: "0.38"
   region: "us-east-1"
@@ -33,6 +33,9 @@ application:
     - "cp -r /opt/dxnn-trader-base /home/ubuntu/dxnn-trader"
     - "chown -R ubuntu:ubuntu /home/ubuntu/dxnn-trader"
     
+    # Fix Git ownership for ubuntu user
+    - "sudo -u ubuntu git config --global --add safe.directory /home/ubuntu/dxnn-trader"
+
     # Force non-distributed Erlang startup for portable nonode@nohost Mnesia checkpoints
     - "rm -f /var/lib/dxnn/.erlang.cookie"
     
